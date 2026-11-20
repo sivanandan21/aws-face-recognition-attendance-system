@@ -7,18 +7,28 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        serif: ['Newsreader', 'Playfair Display', 'Georgia', 'serif'],
+        sans: ['Inter', '-apple-system', 'sans-serif'],
       },
       colors: {
-        primary: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-        }
+        canvas: '#F5F4F0',
+        sheet: '#FFFFFF',
+        rail: '#FAF9F6',
+        surfaceSoft: '#F4F3EE',
+        control: '#E7E4DC',
+        controlActive: '#C9C4B8',
+        avatar: '#D9D4C9',
+        kioskStage: '#161614',
+        hairline: '#E6E4DD',
+        inputBorder: '#DCD9D0',
+        dashedBorder: '#CFCBC0',
+        inkPrimary: '#141413',
+        inkSecondary: '#5C5A55',
+        inkMuted: '#8A867E',
+        accentPine: '#166534',
+        statusPresent: '#7B9478',
+        statusLate: '#B58E43',
+        statusAbsent: '#864446',
       }
     },
   },

@@ -2,8 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg-canvas: #F5F4F0;          /* Outer warm stone linen viewport */
+  --bg-sheet: #FFFFFF;           /* Main architectural rounded workspace */
+  --bg-rail: #FAF9F6;            /* Slim left icon navigation rail */
+  --bg-surface-soft: #F4F3EE;    /* Soft settings rows & input fills */
+  --bg-control: #E7E4DC;         /* Dropdowns, inactive pills */
+  --bg-control-active: #C9C4B8;  /* Active filter pills & segmented tabs */
+  --bg-avatar: #D9D4C9;          /* Warm beige circular initials avatar */
+  --bg-kiosk-stage: #161614;     /* Matte espresso-charcoal camera viewfinder */
+
+  --border-hairline: #E6E4DD;    /* 1px structural dividers & sheet edge */
+  --border-input: #DCD9D0;       /* Input & outline pill borders */
+  --border-dashed: #CFCBC0;      /* Biometric capture slot dashed borders */
+
+  --ink-primary: #141413;        /* Deep carbon headlines, body, solid CTAs */
+  --ink-secondary: #5C5A55;      /* Subtitles, table metadata, helper text */
+  --ink-muted: #8A867E;          /* Placeholders, inactive icons, dashes */
+
+  --accent-pine: #166534;        /* Forest Pine: attendance ring, sliders, toggles */
+  --status-present: #7B9478;     /* Muted sage pill background (white text) */
+  --status-late: #B58E43;        /* Warm ochre pill background (white text) */
+  --status-absent: #864446;      /* Muted burgundy pill background (white text) */
+}
+
 @layer base {
   body {
-    @apply min-h-screen bg-[#F7F7F5] text-gray-900 font-sans antialiased;
+    background-color: var(--bg-canvas);
+    color: var(--ink-primary);
+    font-family: 'Inter', -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom range slider styling */
+input[type="range"].pine-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #E6E4DD;
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+}
+
+input[type="range"].pine-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #141413;
+  cursor: pointer;
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"].pine-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #141413;
+  cursor: pointer;
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }

@@ -1,26 +1,33 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Camera, Upload, Check, AlertCircle, Trash2, UserPlus, RefreshCw, Video } from 'lucide-react'
 import { enrollStudent } from '../services/api'
+
+const POSE_LABELS = [
+  '1. Frontal Pose',
+  '2. Slight Left',
+  '3. Slight Right',
+  '4. Neutral',
+  '5. Extra Angle'
+]
 
 export default function Enrollment({ onComplete }) {
   const [userId, setUserId] = useState('')
   const [fullName, setFullName] = useState('')
-  const [department, setDepartment] = useState('Computer Science')
+  const [department, setDepartment] = useState('Computer Science & Engineering')
   const [email, setEmail] = useState('')
-  const [photos, setPhotos] = useState([]) // Array of base64 strings
+  const [photos, setPhotos] = useState([]) // Array of base64 strings (up to 5)
   const [loading, setLoading] = useState(false)
   const [statusMsg, setStatusMsg] = useState(null)
-  
+
   // Camera State
   const [cameraActive, setCameraActive] = useState(false)
-  const [videoReady, setVideoReady] = useState(false)
   const [availableCameras, setAvailableCameras] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState(localStorage.getItem('kiosk_selected_camera') || '')
+  const [selectedCameraName, setSelectedCameraName] = useState(localStorage.getItem('kiosk_selected_camera_name') || 'Logi C270 HD Webcam')
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const fileInputRef = useRef(null)
 
-  // Enumerate video devices on mount
   useEffect(() => {
     async function getDevices() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return
@@ -29,143 +36,114 @@ export default function Enrollment({ onComplete }) {
         const videoInputs = devices.filter(d => d.kind === 'videoinput')
         setAvailableCameras(videoInputs)
         if (videoInputs.length > 0) {
-          // If there's an external camera or multiple, prioritize the second one or one with 'logitech'/'usb'
-          const externalCam = videoInputs.find(c => 
-            c.label.toLowerCase().includes('logitech') || 
-            c.label.toLowerCase().includes('usb') ||
-            c.label.toLowerCase().includes('external')
+          const externalCam = videoInputs.find(c =>
+            c.label.toLowerCase().includes('logitech') ||
+            c.label.toLowerCase().includes('c270') ||
+            c.label.toLowerCase().includes('c920') ||
+            c.label.toLowerCase().includes('usb')
           )
-          setSelectedCameraId(externalCam ? externalCam.deviceId : videoInputs[0].deviceId)
+          const chosen = externalCam || videoInputs[0]
+          setSelectedCameraId(chosen.deviceId)
+          setSelectedCameraName(chosen.label || 'Logi C270 HD Webcam')
         }
       } catch (err) {
-        console.warn('Error enumerating devices:', err)
+        console.warn('Devices enum error:', err)
       }
     }
     getDevices()
   }, [])
 
-  // Whenever cameraActive is true and videoRef mounts, bind the stream
-  useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
-      videoRef.current.srcObject = streamRef.current
-      videoRef.current.play().catch(err => console.warn('Video play error:', err))
-    }
-  }, [cameraActive, selectedCameraId])
-
-  // Clean up stream on unmount
-  useEffect(() => {
-    return () => {
-      stopWebcam()
-    }
-  }, [])
-
   async function startWebcam(deviceId) {
     stopWebcam()
-    setVideoReady(false)
-    setStatusMsg(null)
-
-    const targetDeviceId = deviceId || selectedCameraId
-    const constraints = {
-      video: targetDeviceId
-        ? { deviceId: { exact: targetDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        : { width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    }
-
+    const targetId = deviceId || selectedCameraId
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: targetId ? { deviceId: { exact: targetId } } : true,
+        audio: false
+      })
       streamRef.current = stream
       setCameraActive(true)
-
-      // Refresh camera labels if permission was just granted
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoInputs = devices.filter(d => d.kind === 'videoinput')
-      setAvailableCameras(videoInputs)
-      if (!targetDeviceId && videoInputs.length > 0) {
-        setSelectedCameraId(videoInputs[0].deviceId)
-      }
     } catch (err) {
-      console.error('Webcam access error:', err)
-      setStatusMsg({
-        type: 'error',
-        text: `Unable to access camera: ${err.message}. Ensure no other app (like another OpenCV process or Zoom) has locked it.`
-      })
+      alert('Cannot start camera: ' + err.message)
       setCameraActive(false)
     }
   }
 
+  useEffect(() => {
+    if (cameraActive && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.play().catch(e => console.warn(e))
+    }
+  }, [cameraActive, selectedCameraId])
+
   function stopWebcam() {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null
     }
     setCameraActive(false)
-    setVideoReady(false)
   }
 
-  function handleCameraSwitch(newDeviceId) {
-    setSelectedCameraId(newDeviceId)
-    localStorage.setItem('kiosk_selected_camera', newDeviceId)
-    if (cameraActive) {
-      startWebcam(newDeviceId)
-    }
-  }
+  useEffect(() => {
+    return () => stopWebcam()
+  }, [])
 
-  function capturePhoto() {
+  function snapCurrentAngle() {
     const video = videoRef.current
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-      setStatusMsg({
-        type: 'error',
-        text: 'Camera feed is still initializing. Please wait a few seconds until the preview is visible.'
-      })
-      return
-    }
+    if (!video || photos.length >= 5) return
 
     const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    canvas.width = Math.min(video.videoWidth || 640, 640)
+    canvas.height = Math.round((canvas.width / (video.videoWidth || 640)) * (video.videoHeight || 480))
     const ctx = canvas.getContext('2d')
-
-    // Draw the current video frame onto canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const base64Data = canvas.toDataURL('image/jpeg', 0.95).split(',')[1]
+    const b64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1]
 
-    if (photos.length < 5) {
-      setPhotos(prev => [...prev, base64Data])
-      setStatusMsg({
-        type: 'success',
-        text: `Photo #${photos.length + 1} captured successfully!`
-      })
-    }
+    setPhotos(prev => [...prev, b64].slice(0, 5))
   }
 
   function handleFileUpload(e) {
     const files = Array.from(e.target.files)
+    if (!files.length) return
+
     files.forEach(file => {
+      if (photos.length >= 5) return
       const reader = new FileReader()
-      reader.onload = (event) => {
-        const b64 = event.target.result.split(',')[1]
-        setPhotos(prev => (prev.length < 5 ? [...prev, b64] : prev))
+      reader.onload = ev => {
+        const b64 = ev.target.result.split(',')[1]
+        setPhotos(prev => {
+          if (prev.length >= 5) return prev
+          return [...prev, b64]
+        })
       }
       reader.readAsDataURL(file)
     })
   }
 
   function removePhoto(idx) {
-    setPhotos(photos.filter((_, i) => i !== idx))
+    setPhotos(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function handleClear() {
+    setUserId('')
+    setFullName('')
+    setEmail('')
+    setPhotos([])
+    setStatusMsg(null)
+    stopWebcam()
   }
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!userId.trim() || !fullName.trim()) {
-      setStatusMsg({ type: 'error', text: 'Student ID and Full Name are required.' })
+      setStatusMsg({ type: 'error', text: 'Please fill in Student ID and Full Name.' })
       return
     }
-    if (photos.length === 0) {
-      setStatusMsg({ type: 'error', text: 'Please capture or upload at least 1 photo (3-5 recommended).' })
+    if (photos.length < 3) {
+      setStatusMsg({ type: 'error', text: 'At least 3 face angles are required for accurate biometric matching.' })
       return
     }
 
@@ -173,274 +151,398 @@ export default function Enrollment({ onComplete }) {
     setStatusMsg(null)
 
     try {
-      const res = await enrollStudent({
+      await enrollStudent({
         user_id: userId.trim(),
         full_name: fullName.trim(),
         department,
         email: email.trim(),
         images: photos
       })
-      setStatusMsg({
-        type: 'success',
-        text: `Enrolled successfully! Indexed ${res.faces_indexed} face vectors.`
-      })
-      stopWebcam()
+
+      setStatusMsg({ type: 'success', text: `Successfully enrolled ${fullName} with ${photos.length} biometric vectors!` })
       setTimeout(() => {
         if (onComplete) onComplete()
       }, 1500)
     } catch (err) {
-      setStatusMsg({ type: 'error', text: err.message || 'Enrollment request failed' })
+      setStatusMsg({ type: 'error', text: err.message || 'Enrollment failed.' })
     } finally {
       setLoading(false)
     }
   }
 
-  const angleLabels = [
-    '1. Frontal Pose',
-    '2. Slight Left Angle',
-    '3. Slight Right Angle',
-    '4. Natural Expression',
-    '5. Extra Angle'
-  ]
+  const isFormValid = userId.trim() && fullName.trim() && photos.length >= 3
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
-          <span>Student Enrollment</span>
-          <span className="text-xs bg-gray-100 text-gray-600 border border-gray-200 px-2 py-0.5 rounded-full font-mono">
-            Rekognition Vectors
-          </span>
-        </h2>
-        <p className="text-sm text-gray-500 mt-1">
-          Capture 3 to 5 multi-angle face photos to build the student vector profile.
-        </p>
+    <div className="flex flex-col">
+      {/* Header Row */}
+      <div className="flex justify-between items-start pb-6 border-b border-[#E6E4DD]">
+        <div>
+          <h1 className="font-serif font-bold text-[34px] leading-tight tracking-[-0.02em] text-[#141413]">
+            Student Enrollment
+          </h1>
+          <p className="text-sm text-[#5C5A55] mt-1">
+            Register identity details and capture 3 to 5 multi-angle face vectors
+          </p>
+        </div>
+
+        <div className="text-sm font-medium text-[#5C5A55] pt-2">
+          Step 1 of 2 &bull; Profile &amp; Angles
+        </div>
       </div>
 
       {statusMsg && (
         <div
-          className={`p-4 rounded-xl flex items-center gap-3 text-sm font-medium ${
+          className={`mt-4 p-3.5 rounded-xl text-sm font-medium flex items-center justify-between ${
             statusMsg.type === 'success'
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : 'bg-red-50 text-red-700 border border-red-200'
+              ? 'bg-[#E8F0EA] text-[#166534] border border-[#7B9478]/40'
+              : 'bg-[#F9EBEB] text-[#864446] border border-[#864446]/40'
           }`}
         >
-          {statusMsg.type === 'success' ? <Check className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
           <span>{statusMsg.text}</span>
+          <button onClick={() => setStatusMsg(null)} className="text-xs font-bold ml-3">&times;</button>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-8">
-        {/* Metadata Inputs */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* 2-Column Open Split */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.38fr] gap-9 mt-6">
+        {/* Left Column: Student Identity */}
+        <div className="border-r border-[#E6E4DD] pr-9 flex flex-col justify-between">
           <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-              Student / User ID *
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. 21BCE1042"
-              value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500 font-mono"
-            />
+            <h2 className="font-semibold text-lg text-[#141413] mb-4">
+              Student Identity
+            </h2>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* User ID */}
+              <div>
+                <label className="block text-xs font-medium text-[#141413] mb-1.5">
+                  Student / User ID <span className="text-[#9F1239]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={userId}
+                  onChange={e => setUserId(e.target.value)}
+                  placeholder="e.g. 21BCE1042"
+                  className="w-full h-11 bg-[#F4F3EE] border border-[#DCD9D0] rounded-lg px-3.5 text-sm text-[#141413] placeholder-[#8A867E] focus:outline-none focus:border-[#166534]"
+                />
+              </div>
+
+              {/* Full Name */}
+              <div>
+                <label className="block text-xs font-medium text-[#141413] mb-1.5">
+                  Full Name <span className="text-[#9F1239]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={e => setFullName(e.target.value)}
+                  placeholder="e.g. Rohit Kumar"
+                  className="w-full h-11 bg-[#F4F3EE] border border-[#DCD9D0] rounded-lg px-3.5 text-sm text-[#141413] placeholder-[#8A867E] focus:outline-none focus:border-[#166534]"
+                />
+              </div>
+
+              {/* Department */}
+              <div>
+                <label className="block text-xs font-medium text-[#141413] mb-1.5">
+                  Department
+                </label>
+                <div className="relative">
+                  <select
+                    value={department}
+                    onChange={e => setDepartment(e.target.value)}
+                    className="w-full h-11 bg-[#F4F3EE] border border-[#DCD9D0] rounded-lg px-3.5 text-sm text-[#141413] appearance-none focus:outline-none focus:border-[#166534] cursor-pointer"
+                  >
+                    <option value="Computer Science & Engineering">Computer Science &amp; Engineering</option>
+                    <option value="Electronics & Communication">Electronics &amp; Communication</option>
+                    <option value="Mechanical Engineering">Mechanical Engineering</option>
+                    <option value="Civil Engineering">Civil Engineering</option>
+                    <option value="Biotechnology">Biotechnology</option>
+                  </select>
+                  <svg
+                    className="w-4 h-4 text-[#5C5A55] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Email Address */}
+              <div>
+                <label className="block text-xs font-medium text-[#141413] mb-1.5">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="e.g. rohit.kumar@vitstudent.ac.in"
+                  className="w-full h-11 bg-[#F4F3EE] border border-[#DCD9D0] rounded-lg px-3.5 text-sm text-[#141413] placeholder-[#8A867E] focus:outline-none focus:border-[#166534]"
+                />
+              </div>
+            </form>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-              Full Name *
-            </label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Rohit Kumar"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-              Department
-            </label>
-            <select
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-              className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500"
+          {/* Action Row */}
+          <div className="flex items-center gap-3 mt-6 pt-4">
+            <button
+              type="button"
+              onClick={handleClear}
+              className="px-6 py-2.5 rounded-full border border-[#8A8275] text-sm font-medium text-[#141413] hover:bg-[#FAF9F6] transition-colors"
             >
-              <option value="Computer Science">Computer Science &amp; Engineering</option>
-              <option value="Information Technology">Information Technology</option>
-              <option value="Electronics">Electronics &amp; Communication</option>
-              <option value="Mechanical">Mechanical Engineering</option>
-              <option value="Civil">Civil Engineering</option>
-            </select>
-          </div>
+              Clear
+            </button>
 
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-              Email Address
-            </label>
-            <input
-              type="email"
-              placeholder="e.g. rohit.kumar@vitstudent.ac.in"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500"
-            />
+            <button
+              type="button"
+              disabled={!isFormValid || loading}
+              onClick={handleSubmit}
+              className={`flex-1 py-2.5 rounded-full text-sm font-medium text-white transition-colors ${
+                isFormValid && !loading
+                  ? 'bg-[#141413] hover:bg-black cursor-pointer shadow-sm'
+                  : 'bg-[#BCB8AE] cursor-not-allowed'
+              }`}
+            >
+              {loading ? 'Saving...' : 'Save & Index Profile'}
+            </button>
           </div>
         </div>
 
-        {/* Multi-angle Photo Studio */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h3 className="font-semibold text-gray-900">Multi-Angle Enrollment Photos ({photos.length}/5)</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Take photos with slight angle variations to maximize recognition accuracy.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Camera Source Selector */}
-              {availableCameras.length > 0 && (
-                <div className="flex items-center gap-1.5 bg-white border border-gray-300 rounded-lg px-2 py-1">
-                  <Video className="h-3.5 w-3.5 text-gray-400" />
-                  <select
-                    value={selectedCameraId}
-                    onChange={(e) => handleCameraSwitch(e.target.value)}
-                    className="bg-transparent text-xs text-gray-700 focus:outline-none max-w-[150px] truncate"
-                  >
-                    {availableCameras.map((cam, idx) => (
-                      <option key={cam.deviceId || idx} value={cam.deviceId}>
-                        {cam.label || `Camera ${idx + 1}`}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {!cameraActive ? (
-                <button
-                  type="button"
-                  onClick={() => startWebcam()}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-medium shadow-sm transition"
-                >
-                  <Camera className="h-4 w-4" />
-                  <span>Start Live Webcam</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={stopWebcam}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 rounded-lg text-xs font-medium transition"
-                >
-                  <span>Stop Camera</span>
-                </button>
-              )}
-
-              <label className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-xs font-medium cursor-pointer transition">
-                <Upload className="h-4 w-4" />
-                <span>Upload Files</span>
-                <input
-                  type="file"
-                  multiple
-                  accept="image/jpeg,image/png"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-            </div>
+        {/* Right Column: Biometric Angles */}
+        <div className="flex flex-col">
+          <div className="flex justify-between items-baseline mb-2">
+            <h2 className="font-semibold text-lg text-[#141413]">
+              Biometric Angles
+            </h2>
+            <span className="text-xs text-[#5C5A55] font-medium">
+              {photos.length} of 5 captured &bull; Minimum 3 required
+            </span>
           </div>
 
-          {/* Active Camera View */}
-          {cameraActive && (
-            <div className="border border-gray-200 rounded-xl bg-gray-50 p-4 flex flex-col items-center">
-              <div className="relative rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center min-h-[280px] w-full max-w-lg shadow-sm">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  onLoadedMetadata={() => setVideoReady(true)}
-                  onCanPlay={() => setVideoReady(true)}
-                  className={`w-full max-h-72 object-cover transition-opacity duration-300 ${
-                    videoReady ? 'opacity-100' : 'opacity-0'
-                  }`}
-                />
-                {!videoReady && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 gap-2">
-                    <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
-                    <span className="text-xs">Initializing camera feed...</span>
-                  </div>
-                )}
-              </div>
+          {/* Progress Bar (8px rounded track) */}
+          <div className="w-full h-2 rounded-full border border-[#166534] bg-white p-0.5 overflow-hidden">
+            <div
+              className="h-full bg-[#166534] rounded-full transition-all duration-300"
+              style={{ width: `${(photos.length / 5) * 100}%` }}
+            />
+          </div>
 
-              <div className="mt-4 flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={capturePhoto}
-                  disabled={!videoReady || photos.length >= 5}
-                  className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-semibold shadow-sm transition disabled:opacity-50"
-                >
-                  <Camera className="h-4 w-4" />
-                  <span>Capture Angle #{photos.length + 1}</span>
-                </button>
-              </div>
+          {/* Single Toolbar Row */}
+          <div className="flex items-center gap-2.5 my-4">
+            {/* Camera Selector Dropdown */}
+            <div className="relative">
+              <select
+                value={selectedCameraId}
+                onChange={e => {
+                  const id = e.target.value
+                  setSelectedCameraId(id)
+                  const found = availableCameras.find(c => c.deviceId === id)
+                  if (found) setSelectedCameraName(found.label)
+                  if (cameraActive) startWebcam(id)
+                }}
+                className="appearance-none bg-[#F4F3EE] hover:bg-[#E7E4DC] border border-[#DCD9D0] text-[#141413] text-xs font-medium pl-3 pr-7 py-2 rounded-lg focus:outline-none cursor-pointer"
+              >
+                {availableCameras.length > 0 ? (
+                  availableCameras.map((cam, idx) => (
+                    <option key={cam.deviceId || idx} value={cam.deviceId}>
+                      {cam.label || `Camera ${idx + 1}`}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">{selectedCameraName}</option>
+                )}
+              </select>
+              <svg
+                className="w-3.5 h-3.5 text-[#5C5A55] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
+
+            {/* Start Live Webcam */}
+            {cameraActive ? (
+              <button
+                type="button"
+                onClick={stopWebcam}
+                className="bg-[#864446] hover:bg-[#72383a] text-white text-xs font-medium px-4 py-2 rounded-full transition-colors"
+              >
+                Stop Webcam
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => startWebcam()}
+                className="bg-[#141413] hover:bg-black text-white text-xs font-medium px-4 py-2 rounded-full transition-colors shadow-sm"
+              >
+                Start Live Webcam
+              </button>
+            )}
+
+            {/* Upload Files */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current && fileInputRef.current.click()}
+              className="border border-[#8A8275] text-[#141413] hover:bg-[#FAF9F6] text-xs font-medium px-4 py-2 rounded-full transition-colors"
+            >
+              Upload Files
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </div>
+
+          {/* Active Live Webcam Preview & Snap Trigger */}
+          {cameraActive && (
+            <div className="relative rounded-xl overflow-hidden bg-[#161614] mb-4 border border-[#DCD9D0] max-h-48 flex items-center justify-center">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-44 object-cover"
+              />
+              <button
+                type="button"
+                onClick={snapCurrentAngle}
+                disabled={photos.length >= 5}
+                className="absolute bottom-3 bg-[#141413]/90 hover:bg-black text-white text-xs font-semibold px-4 py-1.5 rounded-full border border-white/20 shadow-md backdrop-blur-sm"
+              >
+                📸 Snap Pose ({photos.length + 1}/5)
+              </button>
             </div>
           )}
 
-          {/* Photo Gallery Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-            {[0, 1, 2, 3, 4].map((idx) => {
+          {/* 5-Slot Pose Grid (3 on top row, 2 on bottom row) */}
+          <div className="grid grid-cols-3 gap-3.5">
+            {POSE_LABELS.slice(0, 3).map((label, idx) => {
               const photo = photos[idx]
               return (
                 <div
                   key={idx}
-                  className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50 flex flex-col items-center justify-center aspect-[4/5] relative group"
+                  onClick={() => {
+                    if (cameraActive) snapCurrentAngle()
+                    else if (!photo) fileInputRef.current && fileInputRef.current.click()
+                  }}
+                  className="relative bg-[#F6F5F0] border-[1.5px] border-dashed border-[#CFCBC0] rounded-xl h-[120px] flex flex-col items-center justify-center p-2 text-center cursor-pointer hover:bg-[#ECEAE3] transition-colors overflow-hidden group"
                 >
                   {photo ? (
                     <>
                       <img
                         src={`data:image/jpeg;base64,${photo}`}
-                        alt={`Angle ${idx + 1}`}
-                        className="w-full h-full object-cover"
+                        alt={label}
+                        className="w-full h-full object-cover rounded-lg"
                       />
                       <button
                         type="button"
-                        onClick={() => removePhoto(idx)}
-                        className="absolute top-2 right-2 p-1.5 rounded-md bg-red-600 text-white opacity-0 group-hover:opacity-100 transition shadow-sm"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removePhoto(idx)
+                        }}
+                        className="absolute top-1.5 right-1.5 w-5 h-5 bg-black/60 hover:bg-black text-white rounded-full flex items-center justify-center text-xs leading-none"
+                        title="Remove angle"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        &times;
                       </button>
-                      <span className="absolute bottom-1 left-2 text-[10px] font-medium text-emerald-700 bg-white/90 px-1.5 py-0.5 rounded">
-                        Angle {idx + 1}
-                      </span>
                     </>
                   ) : (
-                    <div className="text-center p-3 text-gray-400">
-                      <Camera className="h-6 w-6 mx-auto mb-1 opacity-40" />
-                      <span className="text-[11px] block">{angleLabels[idx]}</span>
-                    </div>
+                    <>
+                      <div className="text-xs font-medium text-[#141413] mb-1.5">
+                        {label}
+                      </div>
+                      <svg
+                        className="w-5 h-5 text-[#8A867E] group-hover:text-[#141413] transition-colors"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                        <circle cx="12" cy="13" r="4" />
+                      </svg>
+                    </>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3.5 mt-3.5">
+            {POSE_LABELS.slice(3, 5).map((label, i) => {
+              const idx = i + 3
+              const photo = photos[idx]
+              return (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    if (cameraActive) snapCurrentAngle()
+                    else if (!photo) fileInputRef.current && fileInputRef.current.click()
+                  }}
+                  className="relative bg-[#F6F5F0] border-[1.5px] border-dashed border-[#CFCBC0] rounded-xl h-[120px] flex flex-col items-center justify-center p-2 text-center cursor-pointer hover:bg-[#ECEAE3] transition-colors overflow-hidden group"
+                >
+                  {photo ? (
+                    <>
+                      <img
+                        src={`data:image/jpeg;base64,${photo}`}
+                        alt={label}
+                        className="w-full h-full object-cover rounded-lg"
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removePhoto(idx)
+                        }}
+                        className="absolute top-1.5 right-1.5 w-5 h-5 bg-black/60 hover:bg-black text-white rounded-full flex items-center justify-center text-xs leading-none"
+                        title="Remove angle"
+                      >
+                        &times;
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xs font-medium text-[#141413] mb-1.5">
+                        {label}
+                      </div>
+                      <svg
+                        className="w-5 h-5 text-[#8A867E] group-hover:text-[#141413] transition-colors"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                        <circle cx="12" cy="13" r="4" />
+                      </svg>
+                    </>
                   )}
                 </div>
               )
             })}
           </div>
         </div>
-
-        {/* Submit Button */}
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={loading || photos.length === 0}
-            className="flex items-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold shadow-sm transition disabled:opacity-50"
-          >
-            <UserPlus className="h-4 w-4" />
-            <span>{loading ? 'Indexing User Vectors...' : 'Enroll Student in AWS'}</span>
-          </button>
-        </div>
-      </form>
+      </div>
     </div>
   )
 }
