@@ -1,0 +1,340 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Smart Attendance System AWS Serverless Backend.
+  Features Rekognition User Vectors, DynamoDB Session Locking,
+  S3 7-day Audit Snapshots, and SNS Security Alerts.
+
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 512
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        AWS_REGION_NAME: !Ref AWS::Region
+        USERS_TABLE: !Ref UsersTable
+        ATTENDANCE_TABLE: !Ref AttendanceLogsTable
+        SNAPSHOT_BUCKET: !Ref AuditSnapshotBucket
+        REKOGNITION_COLLECTION: !Ref RekognitionCollectionId
+        SNS_TOPIC_ARN: !Ref SecurityAlertsTopic
+        API_SECRET_KEY: !Ref KioskSecretKey
+        CAMPUS_LAT: !Ref CampusLatitude
+        CAMPUS_LON: !Ref CampusLongitude
+        GEOFENCE_RADIUS_METERS: !Ref GeofenceRadiusMeters
+        GEOFENCE_ENABLED: !Ref GeofenceEnabled
+        LATE_CUTOFF_TIME: !Ref LateCutoffTimeIST
+
+Parameters:
+  RekognitionCollectionId:
+    Type: String
+    Default: smart-attendance-collection
+    Description: Name of the Amazon Rekognition Face Collection
+
+  KioskSecretKey:
+    Type: String
+    NoEcho: true
+    Default: dev-kiosk-secret-key-change-in-prod
+    Description: Shared secret key for Kiosk API Gateway authentication
+
+  CampusLatitude:
+    Type: Number
+    Default: 12.9710
+    Description: Latitude for campus geo-fencing (VIT Vellore)
+
+  CampusLongitude:
+    Type: Number
+    Default: 79.1591
+    Description: Longitude for campus geo-fencing (VIT Vellore)
+
+  GeofenceRadiusMeters:
+    Type: Number
+    Default: 500
+    Description: Allowed radius from campus center in meters
+
+  GeofenceEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+
+  LateCutoffTimeIST:
+    Type: String
+    Default: "09:15"
+    Description: Time (HH:MM in IST) after which attendance is marked LATE
+
+Resources:
+  # ==========================================
+  # HTTP API GATEWAY
+  # ==========================================
+  HttpAttendanceApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - x-api-key
+          - Authorization
+        AllowOrigins:
+          - '*'
+
+  # ==========================================
+  # DYNAMODB TABLES
+  # ==========================================
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartAttendanceUsers
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+
+  AttendanceLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartAttendanceLogs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_key
+          AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_key
+          KeyType: HASH
+        - AttributeName: user_id
+          KeyType: RANGE
+
+  # ==========================================
+  # S3 AUDIT SNAPSHOT BUCKET (7-DAY EXPIRATION)
+  # ==========================================
+  AuditSnapshotBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'smart-attendance-audit-${AWS::AccountId}-${AWS::Region}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+
+  # ==========================================
+  # SNS SECURITY ALERT TOPIC
+  # ==========================================
+  SecurityAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: smart-attendance-security-alerts
+      DisplayName: Smart Attendance Security Alerts
+
+  # ==========================================
+  # LAMBDA HANDLERS
+  # ==========================================
+  CheckInFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: check_in.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+        - S3CrudPolicy:
+            BucketName: !Ref AuditSnapshotBucket
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt SecurityAlertsTopic.TopicName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:SearchUsersByImage
+                - rekognition:DetectFaces
+              Resource: '*'
+      Events:
+        CheckInPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /check-in
+            Method: post
+
+  EnrollFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: enroll.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - S3CrudPolicy:
+            BucketName: !Ref AuditSnapshotBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:CreateUser
+                - rekognition:IndexFaces
+                - rekognition:AssociateFaces
+              Resource: '*'
+      Events:
+        EnrollPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /enroll
+            Method: post
+
+  AttendanceQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: get_attendance.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        GetAttendance:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /attendance
+            Method: get
+
+  UsersQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: get_users.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        GetUsers:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users
+            Method: get
+
+  GetUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: manage_user.get_user_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        GetUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users/{user_id}
+            Method: get
+
+  UpdateUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: manage_user.update_user_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        UpdateUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users/{user_id}
+            Method: put
+
+  DeleteUserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: manage_user.delete_user_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        DeleteUser:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users/{user_id}
+            Method: delete
+
+  AddUserFacesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: manage_user.add_faces_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:IndexFaces
+                - rekognition:AssociateFaces
+              Resource: '*'
+      Events:
+        AddFaces:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users/{user_id}/faces
+            Method: post
+
+  RemoveUserFaceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: manage_user.remove_face_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:DisassociateFaces
+                - rekognition:DeleteFaces
+              Resource: '*'
+      Events:
+        RemoveFace:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /users/{user_id}/faces/{face_id}
+            Method: delete
+
+Outputs:
+  HttpApiUrl:
+    Description: Base URL for HTTP API Gateway
+    Value: !Sub 'https://${HttpAttendanceApi}.execute-api.${AWS::Region}.amazonaws.com'
+  UsersTableName:
+    Description: Users DynamoDB Table Name
+    Value: !Ref UsersTable
+  AttendanceLogsTableName:
+    Description: Attendance Logs DynamoDB Table Name
+    Value: !Ref AttendanceLogsTable
+  SnapshotBucketName:
+    Description: Audit Snapshot S3 Bucket Name
+    Value: !Ref AuditSnapshotBucket
+  SecurityAlertsTopicArn:
+    Description: SNS Security Alerts Topic ARN
+    Value: !Ref SecurityAlertsTopic

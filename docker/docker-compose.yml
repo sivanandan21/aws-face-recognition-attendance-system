@@ -1,0 +1,56 @@
+services:
+  # ==========================================
+  # Edge Kiosk (Logitech USB Webcam + YOLOv8n)
+  # ==========================================
+  edge-kiosk:
+    build:
+      context: ../edge-kiosk
+      dockerfile: Dockerfile
+    container_name: smart-attendance-kiosk
+    restart: unless-stopped
+    devices:
+      - "${VIDEO_DEVICE:-/dev/video0}:/dev/video0"
+    volumes:
+      - kiosk-data:/data
+    environment:
+      - CAMERA_SOURCE=${CAMERA_SOURCE:-auto}
+      - CAMERA_INDEX=${CAMERA_INDEX:-0}
+      - CAMERA_WIDTH=1920
+      - CAMERA_HEIGHT=1080
+      - CAMERA_FPS=30
+      - CAMERA_FOURCC=MJPG
+      - FACE_CONF_THRESHOLD=0.80
+      - MIN_FACE_SIZE=112
+      - BLUR_THRESHOLD=100.0
+      - MIN_EXPOSURE=45.0
+      - MAX_EXPOSURE=220.0
+      - EAR_THRESHOLD=0.22
+      - REQUIRED_BLINKS=1
+      - COOLDOWN_SECONDS=15.0
+      - DB_PATH=/data/offline_queue.db
+      - API_BASE_URL=${API_BASE_URL:-https://api.example.com}
+      - API_KEY=${API_KEY:-dev-kiosk-secret-key-change-in-prod}
+      - DEVICE_ID=${DEVICE_ID:-kiosk-edge-01}
+      - GEOFENCE_ENABLED=${GEOFENCE_ENABLED:-true}
+      - VIT_LATITUDE=12.9710
+      - VIT_LONGITUDE=79.1591
+      - ALLOWED_RADIUS_METERS=500.0
+
+  # ==========================================
+  # Admin Dashboard (React + Nginx)
+  # ==========================================
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: Dockerfile
+    container_name: smart-attendance-dashboard
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      - VITE_API_BASE_URL=${API_BASE_URL:-http://localhost:3001}
+      - VITE_API_KEY=${API_KEY:-dev-kiosk-secret-key-change-in-prod}
+
+volumes:
+  kiosk-data:
+    driver: local
