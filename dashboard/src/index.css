@@ -3,27 +3,45 @@
 @tailwind utilities;
 
 :root {
-  --bg-canvas: #F5F4F0;          /* Outer warm stone linen viewport */
-  --bg-sheet: #FFFFFF;           /* Main architectural rounded workspace */
-  --bg-rail: #FAF9F6;            /* Slim left icon navigation rail */
-  --bg-surface-soft: #F4F3EE;    /* Soft settings rows & input fills */
-  --bg-control: #E7E4DC;         /* Dropdowns, inactive pills */
-  --bg-control-active: #C9C4B8;  /* Active filter pills & segmented tabs */
-  --bg-avatar: #D9D4C9;          /* Warm beige circular initials avatar */
-  --bg-kiosk-stage: #161614;     /* Matte espresso-charcoal camera viewfinder */
+  --bg-canvas: #F5F4F0;
+  /* Outer warm stone linen viewport */
+  --bg-sheet: #FFFFFF;
+  /* Main architectural rounded workspace */
+  --bg-rail: #FAF9F6;
+  /* Slim left icon navigation rail */
+  --bg-surface-soft: #F4F3EE;
+  /* Soft settings rows & input fills */
+  --bg-control: #E7E4DC;
+  /* Dropdowns, inactive pills */
+  --bg-control-active: #C9C4B8;
+  /* Active filter pills & segmented tabs */
+  --bg-avatar: #D9D4C9;
+  /* Warm beige circular initials avatar */
+  --bg-kiosk-stage: #161614;
+  /* Matte espresso-charcoal camera viewfinder */
 
-  --border-hairline: #E6E4DD;    /* 1px structural dividers & sheet edge */
-  --border-input: #DCD9D0;       /* Input & outline pill borders */
-  --border-dashed: #CFCBC0;      /* Biometric capture slot dashed borders */
+  --border-hairline: #E6E4DD;
+  /* 1px structural dividers & sheet edge */
+  --border-input: #DCD9D0;
+  /* Input & outline pill borders */
+  --border-dashed: #CFCBC0;
+  /* Biometric capture slot dashed borders */
 
-  --ink-primary: #141413;        /* Deep carbon headlines, body, solid CTAs */
-  --ink-secondary: #5C5A55;      /* Subtitles, table metadata, helper text */
-  --ink-muted: #8A867E;          /* Placeholders, inactive icons, dashes */
+  --ink-primary: #141413;
+  /* Deep carbon headlines, body, solid CTAs */
+  --ink-secondary: #5C5A55;
+  /* Subtitles, table metadata, helper text */
+  --ink-muted: #8A867E;
+  /* Placeholders, inactive icons, dashes */
 
-  --accent-pine: #166534;        /* Forest Pine: attendance ring, sliders, toggles */
-  --status-present: #7B9478;     /* Muted sage pill background (white text) */
-  --status-late: #B58E43;        /* Warm ochre pill background (white text) */
-  --status-absent: #864446;      /* Muted burgundy pill background (white text) */
+  --accent-pine: #166534;
+  /* Forest Pine: attendance ring, sliders, toggles */
+  --status-present: #7B9478;
+  /* Muted sage pill background (white text) */
+  --status-late: #B58E43;
+  /* Warm ochre pill background (white text) */
+  --status-absent: #864446;
+  /* Muted burgundy pill background (white text) */
 }
 
 @layer base {

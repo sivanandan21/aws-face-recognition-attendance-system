@@ -1,20 +1,48 @@
-# Production Smart Attendance System
+# Smart Attendance System: Edge-to-Cloud Biometric Verification
 
-[![CI/CD Pipeline](https://github.com/sirisgowda/aws-face-recognition-attendance-system/actions/workflows/deploy-aws.yml/badge.svg)](https://github.com/sirisgowda/aws-face-recognition-attendance-system/actions)
+[![Live Production](https://img.shields.io/badge/Production%20Live-13--126--255--119.sslip.io-166534?style=flat&logo=amazon-aws)](https://13-126-255-119.sslip.io)
+[![CI/CD Pipeline](https://github.com/sivanandan21/aws-face-recognition-attendance-system/actions/workflows/deploy-aws.yml/badge.svg)](https://github.com/sivanandan21/aws-face-recognition-attendance-system/actions)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Node.js 22](https://img.shields.io/badge/Node.js-22-green.svg)](https://nodejs.org/)
 [![AWS Region](https://img.shields.io/badge/AWS%20Region-ap--south--1%20(Mumbai)-orange.svg)](https://aws.amazon.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An enterprise-ready, edge-to-cloud Smart Attendance System engineered with **Logitech USB webcam tuning**, **YOLOv8n-face detection**, **MediaPipe Eye Aspect Ratio (EAR) liveness verification**, **SQLite offline resilience queue**, and an **AWS Serverless backend** featuring **Amazon Rekognition User Vectors** and **DynamoDB conditional duplicate locking**.
+An enterprise-grade, edge-to-cloud Smart Biometric Attendance System featuring **simultaneous multi-person face recognition**, **Logitech USB webcam hardware optimization**, **YOLOv8n-face detection**, **MediaPipe Eye Aspect Ratio (EAR) liveness checks**, an **offline-first SQLite sync queue**, and an **AWS Serverless cloud backbone** utilizing **Amazon Rekognition User Vectors** and **DynamoDB conditional session locking**.
+
+Engineered with a bespoke **Ceramic & Stone architectural design system** (Newsreader Serif + Tabular Inter UI) and deployed with 24/7 uptime on AWS EC2 with automatic Let's Encrypt SSL.
+
+🌐 **Live Production Web App:** [https://13-126-255-119.sslip.io](https://13-126-255-119.sslip.io)
+
+---
+
+## Table of Contents
+- [Attribution & Project Lineage](#attribution--project-lineage)
+- [System Architecture](#system-architecture)
+- [Key Capabilities & Feature Highlights](#key-capabilities--feature-highlights)
+  - [1. Multi-Person Biometric Recognition Engine](#1-multi-person-biometric-recognition-engine)
+  - [2. Bespoke Editorial UI/UX Design System](#2-bespoke-editorial-uiux-design-system)
+  - [3. Edge Kiosk Hardware & Computer Vision Pipeline](#3-edge-kiosk-hardware--computer-vision-pipeline)
+  - [4. AWS Serverless Cloud Backbone](#4-aws-serverless-cloud-backbone)
+- [Directory Layout](#directory-layout)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Environment Configuration](#environment-configuration)
+  - [AWS Cloud Setup (DynamoDB & Rekognition)](#aws-cloud-setup-dynamodb--rekognition)
+  - [Running the Modern Dashboard Locally](#running-the-modern-dashboard-locally)
+  - [Running the Edge Kiosk Application](#running-the-edge-kiosk-application)
+- [EC2 Production Deployment & 24/7 Daemon](#ec2-production-deployment--247-daemon)
+- [Automated Verification & Testing](#automated-verification--testing)
+- [Contributing & Code Standards](#contributing--code-standards)
+- [License](#license)
 
 ---
 
 ## Attribution & Project Lineage
 
-This production-grade system is refactored and upgraded from the original proof-of-concept repository:
+This production-grade system has been extensively refactored, redesigned, and upgraded from the original proof-of-concept repository:
 - **Original Repository:** [sirisgowda/aws-face-recognition-attendance-system](https://github.com/sirisgowda/aws-face-recognition-attendance-system.git)
 - **Original Author:** Siri S Gowda ([@sirisgowda](https://github.com/sirisgowda))
+- **Active Extended Repository:** [sivanandan21/aws-face-recognition-attendance-system](https://github.com/sivanandan21/aws-face-recognition-attendance-system)
 - **Original Walkthrough Demos:**
   - 🎥 Part 1: [Loom Video Walkthrough](https://www.loom.com/share/dfeec5f74e984d71b1141cc8dc4c969b)
   - 🎥 Part 2: [Loom Video Walkthrough](https://www.loom.com/share/a6c63367173240b0874b0f8f397cbd39)
@@ -22,113 +50,125 @@ This production-grade system is refactored and upgraded from the original proof-
 
 ---
 
-## Key Upgrades & Architecture
+## System Architecture
 
 ```
-                       ┌────────────────────────────────────────────────────────┐
-                       │               Edge Kiosk (Windows / Linux)             │
-                       │                                                        │
-┌─────────────────┐    │  ┌──────────────────┐       ┌───────────────────────┐  │
-│ Logitech Webcam │───>│  │ LogitechWebcam   │──────>│ YOLOv8n-face Detector │  │
-│ 1080p @ 30 FPS  │    │  │ MJPG / CAP_DSHOW │       │ CUDA / CPU (~20% pad) │  │
-└─────────────────┘    │  └──────────────────┘       └───────────┬───────────┘  │
-                       │                                         │              │
-                       │  ┌──────────────────────────────────────▼───────────┐  │
-                       │  │ Local Quality & Liveness Gates                   │  │
-                       │  │ • Laplacian Variance Sharpness (>80.0)           │  │
-                       │  │ • MediaPipe Face Landmarker EAR Blink Check      │  │
-                       │  └──────────────────────┬───────────────────────────┘  │
-                       │                         │                              │
-                       │  ┌──────────────────────▼───────────┐                  │
-                       │  │ Centroid Tracker & Cooldown      │                  │
-                       │  │ 15-second per-face cooldown      │                  │
-                       │  └──────────────┬───────────────────┘                  │
-                       │                 │                                      │
-                       │          [Network OK?]                                 │
-                       │          /          \                                  │
-                       │       (Yes)         (No)                               │
-                       │         │             │                                │
-                       │         │      ┌──────▼─────────────────────┐          │
-                       │         │      │ SQLite Offline Queue       │          │
-                       │         │      │ (auto-syncs on reconnect)  │          │
-                       │         │      └────────────────────────────┘          │
-                       └─────────┼──────────────────────────────────────────────┘
-                                 │
-                    HTTPS Direct │ (x-api-key)
-                                 ▼
-         ┌─────────────────────────────────────────────────┐
-         │         AWS Serverless Cloud (ap-south-1)       │
-         │                                                 │
-         │   ┌─────────────────────────────────────────┐   │
-         │   │   Amazon HTTP API Gateway               │   │
-         │   │   POST /check-in   POST /enroll   GET /att  │   │
-         │   └────────────────────┬────────────────────┘   │
-         │                        │                        │
-         │   ┌────────────────────▼────────────────────┐   │
-         │   │   AWS Lambda Handlers (Python 3.12)     │   │
-         │   └──────┬─────────────┬─────────────┬──────┘   │
-         │          │             │             │          │
-         │   ┌──────▼─────┐ ┌─────▼───────┐ ┌───▼──────┐   │
-         │   │ Rekognition│ │ DynamoDB    │ │ Amazon S3│   │
-         │   │ UserVectors│ │ Condition   │ │ 7-day TTL│   │
-         │   │ (92% match)│ │ Lock (IST)  │ │ Audit    │   │
-         │   └────────────┘ └─────────────┘ └──────────┘   │
-         │          │                                      │
-         │   ┌──────▼─────────────┐                        │
-         │   │ Amazon SNS Alerts  │                        │
-         │   │ (unknown/perimeter)│                        │
-         │   └────────────────────┘                        │
-         └────────────────────────┼────────────────────────┘
-                                  ▲
-                                  │ HTTPS API
-         ┌────────────────────────┴────────────────────────┐
-         │       Admin Dashboard (React + Vite + Tailwind) │
-         │   • Live Check-in Feed   • Daily Stats Cards    │
-         │   • Multi-angle Studio   • 1-Click CSV Export   │
-         └─────────────────────────────────────────────────┘
+                                 ┌──────────────────────────────────────────────────┐
+                                 │              Edge Kiosk / Web Client             │
+                                 │                                                  │
+┌──────────────────────────┐     │  ┌────────────────────┐   ┌───────────────────┐  │
+│ External Webcam / Laptop │────>│  │ Hardware Capture   │──>│ YOLOv8 / SSD      │  │
+│ 1080p / 720p @ 30 FPS    │     │  │ MJPG Low Latency   │   │ MobileNet-V1      │  │
+└──────────────────────────┘     │  └────────────────────┘   └─────────┬─────────┘  │
+                                 │                                     │            │
+                                 │  ┌──────────────────────────────────▼─────────┐  │
+                                 │  │ Local Quality, Liveness & Matching         │  │
+                                 │  │ • Laplacian Variance Sharpness (>80.0)     │  │
+                                 │  │ • MediaPipe EAR Blink Verification         │  │
+                                 │  │ • Multi-Person ResNet 128-D FaceMatcher    │  │
+                                 │  └──────────────────┬─────────────────────────┘  │
+                                 │                     │                            │
+                                 │  ┌──────────────────▼─────────────────┐          │
+                                 │  │ Centroid Tracker & Cooldown Engine │          │
+                                 │  │ 15s per-face deduplication window  │          │
+                                 │  └──────────────────┬─────────────────┘          │
+                                 │                     │                            │
+                                 │              [Network State]                     │
+                                 │              /             \                     │
+                                 │          (Online)       (Offline)                │
+                                 │             │               │                    │
+                                 │             │      ┌────────▼──────────┐         │
+                                 │             │      │ SQLite Sync Queue │         │
+                                 │             │      │ (Auto-Replay)     │         │
+                                 │             │      └───────────────────┘         │
+                                 └─────────────┼────────────────────────────────────┘
+                                               │
+                                  HTTPS Direct │ (Signed Token / API Key)
+                                               ▼
+                         ┌───────────────────────────────────────────┐
+                         │      AWS Cloud Backbone (ap-south-1)      │
+                         │                                           │
+                         │   ┌───────────────────────────────────┐   │
+                         │   │      Amazon API Gateway / EC2     │   │
+                         │   │   Nginx Reverse Proxy + Let's Enc │   │
+                         │   └─────────────────┬─────────────────┘   │
+                         │                     │                     │
+                         │   ┌─────────────────▼─────────────────┐   │
+                         │   │  AWS Lambda / Express API Router  │   │
+                         │   └────────┬──────────────────┬───────┘   │
+                         │            │                  │           │
+                         │   ┌────────▼────────┐ ┌───────▼───────┐   │
+                         │   │ AWS Rekognition │ │ Amazon        │   │
+                         │   │ User Vectors    │ │ DynamoDB      │   │
+                         │   │ Collection      │ │ State Locks   │   │
+                         │   └─────────────────┘ └───────────────┘   │
+                         └───────────────────────────────────────────┘
 ```
-
-### Edge Kiosk Capabilities (`edge-kiosk/`)
-- **Logitech USB Webcam Tuning:** Auto-selects `cv2.CAP_DSHOW` (Windows) or `cv2.CAP_V4L2` (Linux) with 1080p resolution at 30 FPS over `MJPG` FourCC codec, buffer size 1 for zero frame latency, and smart reconnect resilience.
-- **Auto-Discovery & CLI:** Supports `CAMERA_SOURCE=auto` and `CAMERA_NAME_FILTER=Logitech` to auto-detect USB webcams. Run `python main.py --list-cameras` to scan all connected video hardware.
-- **YOLOv8 Face Detection:** Prefers `yolov8s-face.pt` with automatic CPU fallback to `yolov8n-face.pt` with strict confidence threshold `conf=0.80`, cropping all faces in frame with ~20% bounding box margin.
-- **Multi-Stage Local Quality Gates:**
-  - **Min Face Size Gate:** Rejects bounding boxes smaller than 112×112 pixels (`"Move closer - face too small"`).
-  - **Exposure Gate:** Rejects underexposed (< 45) or washed-out (> 220) frames.
-  - **Sharpness Gate:** Laplacian variance blur filter ($var \ge 100.0$) (`"Hold still - image blurry"`).
-  - **Liveness Gate:** MediaPipe Face Landmarker Eye Aspect Ratio (EAR) blink detection.
-- **Centroid Tracker with Cooldown:** 15-second check-in cooldown per tracked user to avoid spamming AWS API Gateway.
-- **SQLite Offline Queue:** Buffers failed check-ins locally in `offline_queue.db` with exact IST timestamps and auto-syncs when internet returns.
-
-### AWS Serverless Cloud Backend (`aws-backend/`)
-- **AWS SAM Template:** Defined in `aws-backend/template.yaml` for region `ap-south-1` (Mumbai) on `python3.12` / AL2023.
-- **Amazon Rekognition User Vectors:** Uses `CreateUser`, `IndexFaces` (with `QualityFilter="AUTO"` across 3-5 enrollment photos), and `SearchUsersByImage` (`UserMatchThreshold=88.0–92.0`). Strictly rejects unknown faces with HTTP 403.
-- **DynamoDB Single-Table / Session Locking & Automatic ABSENT:**
-  - `Users` Table (PK: `user_id`).
-  - `AttendanceLogs` Table (PK: `CLASS#YYYY-MM-DD`, SK: `user_id`).
-  - Repeat scans return `"Already marked present"` via `attribute_not_exists(user_id)`.
-  - `GET /attendance` merges all active students: registered students without a live scan are automatically flagged `status: "ABSENT"`.
-- **Student Profile & Face Photo Management:** Complete CRUD endpoints: `GET /users`, `GET /users/{id}`, `PUT /users/{id}`, `DELETE /users/{id}`, `POST /users/{id}/faces`, `DELETE /users/{id}/faces/{index}`.
-- **S3 Snapshot Audit:** 7-day automatic lifecycle expiration rule for privacy compliance and cost minimization.
-- **Security Alerts:** Publishes to Amazon SNS when unregistered individuals or out-of-boundary access attempts occur.
-
-### Modern Admin Dashboard (`dashboard/`)
-- Built with **React 18**, **Vite**, and **Tailwind CSS**.
-- **Clean Neutral Design System:** Warm light neutral background (`#F7F7F5`), white card surfaces, hairline borders (`#E5E7EB`), Inter typography, left sidebar navigation. Strictly banned AI-slop (no purple/neon gradients, no glassmorphism, no sparkle icons).
-- **Deep Learning Biometric Engine:** Client-side **`face-api.js`** using SSD MobileNet V1 and ResNet-based 128-dimensional face embedding vectors for high-precision matching against 3–5 multi-angle registered templates.
-- **Automatic ABSENT Tracking:** Daily KPI counters show Total Registered, Present, Late, and Absent students. Attendance table supports filter tabs: `All`, `Present`, `Late`, `Absent`.
-- **Student Roster & Photo Management Modal:** In-dashboard editing of student details, viewing of enrolled angle thumbnails, adding new angle photos, and removing poor angles.
-- **Hardware-Aware Camera Selector:** Auto-detects external Logitech and laptop cameras, remembers preferred device in `localStorage`.
-- **Reports and analytics:** Date and department filtering with 1-click CSV export.
 
 ---
 
-## Directory Structure
+## Key Capabilities & Feature Highlights
+
+### 1. Multi-Person Biometric Recognition Engine
+- **Simultaneous Group Check-In:** Unlike standard single-face biometric turnstiles, the detection pipeline uses `faceapi.detectAllFaces()` with SSD MobileNet V1 to isolate and track **multiple individuals in a single camera frame simultaneously**.
+- **High-Precision 128-D Descriptors:** Pre-computes 128-dimensional biometric embeddings using deep residual neural networks (ResNet), cached in memory for sub-millisecond Euclidean distance evaluation via `faceapi.FaceMatcher`.
+- **Intelligent Cooldown Gate:** Tracks each verified student with a non-blocking 15-second cooldown cache. Students walking together are all recognized, marked present, and prevented from creating duplicate DynamoDB log spam.
+- **Zero Mock / Pure Live Data:** All legacy mock/placeholder records (`Aarav Patel`, `Priya Sharma`, etc.) have been completely purged; only authentic enrolled students from DynamoDB/Cloud are recognized.
+
+### 2. Bespoke Editorial UI/UX Design System
+Custom-engineered to match luxury architectural design specifications:
+- **Design Tokens:** Warm ceramic canvas (`#F5F4F0`), pure architectural sheet (`#FFFFFF`), slim navigation rail (`#FAF9F6`), carbon typography (`#141413`), forest pine accent (`#166534`), and muted status pills (`#7B9478` Present, `#B58E43` Late, `#864446` Absent).
+- **Typography:** Serif `Newsreader` headlines combined with tabular-nums `Inter` body for precision alignment of student IDs, timestamps, and confidence percentages.
+- **5 Tailored Screens:**
+  1. **Today's Attendance (Overview):** 96×96 Donut progress ring, 4 large KPI display numerals, segmented status pills, 240px search bar, hairline roster table with initials avatar bubbles.
+  2. **Live Kiosk Check-In:** Matte espresso viewfinder (`#161614`), gold L-bracket guides, floating resolution indicator, active multi-face HUD canvas, recent verifications stream.
+  3. **Student Enrollment Studio:** 5-slot pose grid (Frontal, Slight Left, Slight Right, Neutral, Extra Angle), minimum 3 required indicator progress bar, live camera snapshot mode, real-time index & vector save.
+  4. **System Settings:** Daily late cutoff time picker (IST), Rekognition match threshold slider (50%–99%), minimum angle selector (3, 4, 5), auto-absent session toggle, hardware camera device selector, live cloud health indicator (DynamoDB & Rekognition connected).
+  5. **Attendance Reports & Analytics:** 3-metric statistical summary strip, calendar date picker pill, department filter dropdown, attendance status dropdown, unified search, and 1-click verified CSV export.
+- **Fully Responsive Navigation:** 76px desktop icon rail transitions smoothly to an ergonomic iOS-style bottom navigation bar on mobile devices (<768px).
+
+### 3. Edge Kiosk Hardware & Computer Vision Pipeline
+- **Logitech USB Optimization:** Auto-selects `cv2.CAP_DSHOW` (Windows) or `cv2.CAP_V4L2` (Linux) with 1080p/720p resolution at 30 FPS over `MJPG` FourCC codec, buffer size 1 for zero frame latency.
+- **Multi-Stage Local Quality Gates:**
+  - *Min Face Size Gate:* Rejects bounding boxes smaller than 112×112 pixels (`"Move closer - face too small"`).
+  - *Exposure Gate:* Rejects underexposed (< 45) or washed-out (> 220) frames.
+  - *Sharpness Gate:* Laplacian variance blur filter ($var \ge 100.0$) (`"Hold still - image blurry"`).
+  - *Liveness Gate:* MediaPipe Face Landmarker Eye Aspect Ratio (EAR) blink detection.
+- **SQLite Offline Queue:** Buffers failed check-ins locally in `offline_queue.db` with exact IST timestamps and auto-syncs when network connectivity returns.
+
+### 4. AWS Serverless Cloud Backbone
+- **Amazon Rekognition:** Vector collection `smart-attendance-collection` (Region: `ap-south-1` Mumbai) stores indexed biometric vectors across 3–5 multi-angle enrollment photos.
+- **Amazon DynamoDB Tables:**
+  - `SmartAttendanceUsers` (Partition Key: `user_id`): Stores student registration identity, department, email, profile photos, and enrolled biometric descriptor vectors.
+  - `SmartAttendanceLogs` (Partition Key: `PK: CLASS#YYYY-MM-DD`, Sort Key: `SK: user_id`): Enforces conditional idempotent writes via `attribute_not_exists(user_id)` so repeat scans within the same session never overwrite initial attendance. Automatically computes `Present`, `Late` (based on cutoff time), or `Absent`.
+
+---
+
+## Directory Layout
 
 ```
 aws-face-recognition-attendance-system/
 │
-├── edge-kiosk/                     # Edge Kiosk Application
+├── dashboard/                      # Production React 18 + Vite + Tailwind Web App
+│   ├── src/
+│   │   ├── components/             # 5 Core Application Screens
+│   │   │   ├── Sidebar.jsx         # 76px Desktop Rail & Mobile Bottom Bar
+│   │   │   ├── Overview.jsx        # Today's Attendance, Donut KPI & Roster
+│   │   │   ├── LiveKiosk.jsx       # Multi-Face Camera Viewfinder & HUD
+│   │   │   ├── Enrollment.jsx      # 5-Slot Biometric Enrollment Studio
+│   │   │   ├── Settings.jsx        # Cutoff, Threshold Slider & AWS Health
+│   │   │   └── Reports.jsx         # Query Engine & 1-Click CSV Export
+│   │   ├── services/
+│   │   │   ├── api.js              # DynamoDB & Rekognition Cloud API Connector
+│   │   │   └── faceMatcher.js      # Multi-Person 128-D ResNet Biometric Engine
+│   │   ├── App.jsx                 # View routing & responsive shell
+│   │   ├── index.css               # Design system tokens & root CSS variables
+│   │   └── main.jsx                # React root
+│   ├── public/models/              # face-api.js weights (SSD, Landmarks, ResNet)
+│   ├── tailwind.config.js          # Bespoke theme colors, spacing & typography
+│   └── vite.config.js              # Vite bundler configuration & proxy
+│
+├── edge-kiosk/                     # Python Edge Kiosk Application
 │   ├── camera.py                   # Logitech webcam controller (MJPG, 1080p, 30fps)
 │   ├── config.py                   # 12-factor configuration reader
 │   ├── detector.py                 # YOLOv8n-face detector with GPU/CPU auto-fallback
@@ -137,163 +177,199 @@ aws-face-recognition-attendance-system/
 │   ├── offline_queue.py            # SQLite offline queue & background sync worker
 │   ├── tracker.py                  # Centroid face tracker with 15s cooldown
 │   ├── client.py                   # Direct API Gateway client with offline fallback
-│   ├── main.py                     # Main kiosk execution loop & HUD
-│   ├── Dockerfile                  # Container definition with /dev/video0 pass-through
-│   └── requirements.txt            # Python dependencies for Edge Kiosk
+│   └── main.py                     # Main kiosk execution loop & HUD
 │
-├── aws-backend/                    # AWS Serverless Application Model (SAM)
+├── aws-backend/                    # AWS Serverless Cloud Backend (SAM)
 │   ├── template.yaml               # CloudFormation / SAM infrastructure template
-│   └── handlers/                   # Serverless Lambda Handlers (Python 3.12)
+│   └── handlers/                   # Python 3.12 Serverless Lambda Handlers
 │       ├── check_in.py             # Rekognition SearchUsersByImage + DynamoDB lock
 │       ├── enroll.py               # User Vectors registration (3-5 angles)
 │       ├── get_attendance.py       # Session-partitioned query
-│       ├── get_users.py            # Active student list
-│       └── requirements.txt        # Lambda runtime dependencies
+│       └── get_users.py            # Active student list
 │
-├── dashboard/                      # Modern React Admin Dashboard
-│   ├── src/
-│   │   ├── components/             # Navbar, Overview, Enrollment, Reports
-│   │   ├── services/api.js         # API Gateway integration service
-│   │   ├── App.jsx                 # Main layout
-│   │   └── main.jsx                # Application root
-│   ├── Dockerfile                  # Multi-stage build (node:22-alpine -> nginx:alpine)
-│   ├── nginx.conf                  # Nginx production configuration
-│   └── package.json                # Dashboard dependencies
-│
-├── docker/                         # Multi-Container Compose Stacks
-│   ├── docker-compose.yml          # Production Linux Edge stack (Kiosk + Dashboard)
-│   └── docker-compose.dev.yml      # Windows/macOS Dev stack (Dashboard + DynamoDB-local)
-│
-├── docs/screenshots/               # Preserved historical demo screenshots
 ├── scripts/
-│   └── init_rekognition.py         # One-time Rekognition Collection initialization
-├── tests/                          # Automated Pytest Suite
-│   ├── test_edge_kiosk.py          # Edge Kiosk unit tests
+│   ├── init_aws.py                 # One-click DynamoDB & Rekognition provisioner
+│   └── init_rekognition.py         # Rekognition collection creator
+│
+├── tests/                          # Automated Pytest Suite (20 Tests)
+│   ├── test_edge_kiosk.py          # Edge Kiosk unit & gate tests
 │   └── test_aws_backend.py         # AWS backend Lambda unit tests
 │
-├── .env.example                    # Complete environment variables template
-├── .gitignore                      # Security-hardened gitignore
-└── README.md                       # Comprehensive system documentation
+├── .env.example                    # Environment variable template
+├── docker-compose.yml              # Production container stack
+└── README.md                       # Comprehensive project documentation
 ```
 
 ---
 
-## Quickstart Guide
+## Getting Started
 
-### 1. Configuration Setup
-Copy `.env.example` to `.env` in the root directory:
+### Prerequisites
+- **Node.js** v18+ or v22 LTS
+- **Python** 3.8+ / 3.12
+- **AWS CLI** configured (`aws configure` with valid IAM credentials)
+- **Webcam** (Built-in or USB webcam such as Logitech C270 / Brio)
+
+---
+
+### Environment Configuration
+Copy `.env.example` to `.env` in the repository root:
 ```bash
 cp .env.example .env
 ```
-Update AWS credentials, API secret key, and campus coordinates as required.
+Ensure your AWS credentials and region are set:
+```ini
+AWS_REGION=ap-south-1
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+REKOGNITION_COLLECTION_ID=smart-attendance-collection
+DYNAMODB_USERS_TABLE=SmartAttendanceUsers
+DYNAMODB_LOGS_TABLE=SmartAttendanceLogs
+```
 
 ---
 
-### 2. Windows Local Development Setup
-
-#### A. Run Edge Kiosk Natively (Direct USB Webcam & CUDA Access)
+### AWS Cloud Setup (DynamoDB & Rekognition)
+To automatically inspect, verify, or provision the required DynamoDB tables and Rekognition Collection in AWS `ap-south-1`:
 ```bash
-# Navigate to edge-kiosk directory
+# Activate your python virtual environment
+python scripts/init_aws.py
+```
+*Output:*
+```
+Checking DynamoDB tables in region ap-south-1...
+Table 'SmartAttendanceUsers' verified / created.
+Table 'SmartAttendanceLogs' verified / created.
+Rekognition Collection 'smart-attendance-collection' verified.
+AWS backend resources are ready!
+```
+
+---
+
+### Running the Modern Dashboard Locally
+```bash
+# Navigate to dashboard folder
+cd dashboard
+
+# Install npm dependencies
+npm install
+
+# Start Vite dev server
+npm run dev
+```
+Open **[http://localhost:3000](http://localhost:3000)** in your browser.
+
+---
+
+### Running the Edge Kiosk Application
+```bash
+# Navigate to edge-kiosk folder
 cd edge-kiosk
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run kiosk with live HUD preview window
+# Run the Kiosk with live camera HUD preview
 python main.py
 
-# Or run headless in background
+# Or run headless as a background service
 python main.py --headless
 ```
 
-#### B. Run Admin Dashboard
-```bash
-# Navigate to dashboard directory
-cd dashboard
-
-# Install dependencies & run development server
-npm install
-npm run dev
-```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
 ---
 
-### 3. Linux / Raspberry Pi Docker Deployment
+## EC2 Production Deployment & 24/7 Daemon
 
-Deploy the entire production stack (Edge Kiosk + Admin Dashboard) using Docker Compose:
+The application is deployed on an **AWS EC2 Ubuntu 24.04 LTS instance** in region `ap-south-1` (Mumbai) under the domain:
+👉 **[https://13-126-255-119.sslip.io](https://13-126-255-119.sslip.io)**
+
+### Architecture on EC2:
+1. **PM2 (Process Manager):** Keeps Vite dashboard running 24/7 in the background with auto-restart on boot:
+   ```bash
+   pm2 start npm --name "attendance-dashboard" -- run dev -- --host 0.0.0.0 --port 3000
+   pm2 save
+   sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
+   ```
+2. **Nginx Reverse Proxy:** Terminates incoming SSL/HTTPS traffic on Port 443 and proxies to Port 3000:
+   ```nginx
+   server {
+       server_name 13-126-255-119.sslip.io;
+       location / {
+           proxy_pass http://127.0.0.1:3000;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection "upgrade";
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+3. **Let's Encrypt Certbot:** Provides a free, auto-renewing SSL certificate:
+   ```bash
+   sudo certbot --nginx -d 13-126-255-119.sslip.io --non-interactive --agree-tos -m your_email@example.com
+   ```
+
+### Updating EC2 to Latest Code:
+Whenever changes are pushed to GitHub, update the server with one command:
 ```bash
-docker compose -f docker/docker-compose.yml up -d --build
-```
-> **Note:** Ensure your webcam is connected to `/dev/video0` and accessible by your current user (`sudo usermod -a -G video $USER`).
-
----
-
-### 4. AWS Serverless Backend Deployment (AWS SAM)
-
-#### Prerequisites:
-- AWS CLI configured (`aws configure`)
-- AWS SAM CLI installed ([Installation Guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html))
-
-#### Deploy Cloud Infrastructure:
-```bash
-# Navigate to aws-backend directory
-cd aws-backend
-
-# Build SAM application
-sam build
-
-# Deploy to AWS ap-south-1 (Mumbai)
-sam deploy --guided
-```
-
-#### One-Time Rekognition Collection Setup:
-```bash
-python scripts/init_rekognition.py
+cd ~/aws-face-recognition-attendance-system && git pull && pm2 restart attendance-dashboard
 ```
 
 ---
 
 ## Automated Verification & Testing
 
-Run the automated test suite covering OpenCV blur/EAR gates, tracker cooldowns, SQLite offline resilience, Rekognition User Vectors, and DynamoDB duplicate locking:
+The system includes automated tests validating the biometric quality gates, blink EAR liveness, centroid tracking, offline SQLite queueing, DynamoDB locking, and Rekognition interactions.
 
+### Run Pytest Suite:
 ```bash
-# Run all tests
 python -m pytest tests/ -v
 ```
-
-### Test Suite Summary:
+**Test Results (20/20 Passed):**
 ```
-tests/test_aws_backend.py::test_enroll_missing_fields PASSED
-tests/test_aws_backend.py::test_enroll_success PASSED
-tests/test_aws_backend.py::test_checkin_unauthorized_key PASSED
-tests/test_aws_backend.py::test_checkin_geofence_violation PASSED
-tests/test_aws_backend.py::test_checkin_unknown_face_alert PASSED
-tests/test_aws_backend.py::test_checkin_success_and_duplicate_lock PASSED
-tests/test_aws_backend.py::test_get_attendance_query PASSED
-tests/test_aws_backend.py::test_get_users PASSED
-tests/test_edge_kiosk.py::test_blur_detector_sharp_vs_blurry PASSED
-tests/test_edge_kiosk.py::test_ear_calculation PASSED
-tests/test_edge_kiosk.py::test_liveness_gate_blink_accumulation PASSED
-tests/test_edge_kiosk.py::test_yolo_padding_calculation PASSED
-tests/test_edge_kiosk.py::test_centroid_tracker_and_cooldown PASSED
-tests/test_edge_kiosk.py::test_offline_queue_enqueue_and_sync PASSED
-tests/test_edge_kiosk.py::test_geofencing_inside_and_outside_radius PASSED
-tests/test_edge_kiosk.py::test_api_client_success PASSED
-tests/test_edge_kiosk.py::test_api_client_network_failure_enqueues_offline PASSED
+tests/test_aws_backend.py::test_enroll_missing_fields PASSED             [  5%]
+tests/test_aws_backend.py::test_enroll_success PASSED                    [ 10%]
+tests/test_aws_backend.py::test_checkin_unauthorized_key PASSED          [ 15%]
+tests/test_aws_backend.py::test_checkin_geofence_violation PASSED        [ 20%]
+tests/test_aws_backend.py::test_checkin_unknown_face_alert PASSED        [ 25%]
+tests/test_aws_backend.py::test_checkin_success_and_duplicate_lock PASSED [ 30%]
+tests/test_aws_backend.py::test_get_attendance_query PASSED              [ 35%]
+tests/test_aws_backend.py::test_get_users PASSED                         [ 40%]
+tests/test_edge_kiosk.py::test_blur_detector_sharp_vs_blurry PASSED      [ 45%]
+tests/test_edge_kiosk.py::test_ear_calculation PASSED                    [ 50%]
+tests/test_edge_kiosk.py::test_liveness_gate_blink_accumulation PASSED   [ 55%]
+tests/test_edge_kiosk.py::test_yolo_padding_calculation PASSED           [ 60%]
+tests/test_edge_kiosk.py::test_centroid_tracker_and_cooldown PASSED      [ 65%]
+tests/test_edge_kiosk.py::test_offline_queue_enqueue_and_sync PASSED     [ 70%]
+tests/test_edge_kiosk.py::test_geofencing_inside_and_outside_radius PASSED [ 75%]
+tests/test_edge_kiosk.py::test_api_client_success PASSED                 [ 80%]
+tests/test_edge_kiosk.py::test_api_client_network_failure_enqueues_offline PASSED [ 85%]
+tests/test_edge_kiosk.py::test_exposure_gate_dark_normal_bright PASSED   [ 90%]
+tests/test_edge_kiosk.py::test_min_face_size_gate PASSED                 [ 95%]
+tests/test_edge_kiosk.py::test_camera_auto_discovery_fallback PASSED     [100%]
 
-======================== 17 passed in 0.74s ========================
+======================== 20 passed in 5.20s ========================
 ```
+
+### Validate Production Web Build:
+```bash
+cd dashboard && npm run build
+```
+*Output: `✓ built in ~2.5s` with 0 errors.*
 
 ---
 
-## Contributing & Development Guidelines
-1. **Zero Hardcoded Secrets:** Never hardcode credentials, bucket names, or API keys. Always read from `.env` or system environment variables.
-2. **Offline-First:** All kiosk features must degrade gracefully to the SQLite offline queue during internet disruptions.
-3. **Run Verification Before Commit:** Ensure `pytest tests/` and `npm run build` pass before pushing changes.
+## Contributing & Code Standards
+1. **Zero Hardcoded Credentials:** Never push AWS Secret Keys or private tokens. All credentials must be read from environment variables.
+2. **Offline Resilience:** All biometric capture features must gracefully failover to the local SQLite offline queue when network drops.
+3. **Biometric Integrity:** Multi-person verification requires valid 128-D face embeddings matching registered enrollment vectors above the configured threshold.
+4. **Verification Requirement:** All pull requests must pass both `pytest tests/ -v` and `npm run build`.
 
 ---
 
 ## License
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+This project is open-source under the [MIT License](LICENSE).
+Attribution to original creator Siri S Gowda ([@sirisgowda](https://github.com/sirisgowda)). Extended and enhanced by [@sivanandan21](https://github.com/sivanandan21).

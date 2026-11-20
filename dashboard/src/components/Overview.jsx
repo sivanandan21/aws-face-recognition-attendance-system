@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { fetchAttendance, fetchUsers, updateUser, removeUserFace, addUserFaces } from '../services/api'
+import { fetchAttendance, fetchUsers, updateUser } from '../services/api'
 
 export default function Overview({ onNavigate }) {
   const [records, setRecords] = useState([])
@@ -31,7 +31,6 @@ export default function Overview({ onNavigate }) {
     loadData()
   }, [])
 
-  // Format date display: e.g. "Friday, Nov 20, 2026 · Cutoff 09:15 AM"
   const formattedDate = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
     month: 'short',
@@ -41,7 +40,6 @@ export default function Overview({ onNavigate }) {
 
   const cutoff = localStorage.getItem('kiosk_cutoff_time') || '09:15 AM'
 
-  // Compute metrics
   const totalEnrolled = users.length > 0 ? users.length : records.length
   const presentCount = records.filter(r => (r.status || '').toUpperCase() === 'PRESENT').length
   const lateCount = records.filter(r => (r.status || '').toUpperCase() === 'LATE').length
@@ -49,18 +47,14 @@ export default function Overview({ onNavigate }) {
   const onTimeCount = presentCount
   const onTimePct = totalEnrolled > 0 ? Math.round((onTimeCount / totalEnrolled) * 100) : 0
 
-  // SVG Ring calculation
   const radius = 38
   const circumference = 2 * Math.PI * radius
   const strokeDashoffset = circumference - (onTimePct / 100) * circumference
 
-  // Filter records
   const filteredRecords = records.filter(r => {
-    // Status filter
     if (statusFilter !== 'all' && (r.status || '').toUpperCase() !== statusFilter) {
       return false
     }
-    // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       const matchId = (r.user_id || '').toLowerCase().includes(q)
@@ -71,7 +65,6 @@ export default function Overview({ onNavigate }) {
     return true
   })
 
-  // Format Check-in Time helper
   function formatTime(isoStr) {
     if (!isoStr) return '—'
     try {
@@ -83,13 +76,10 @@ export default function Overview({ onNavigate }) {
     }
   }
 
-  // Get Initials helper
   function getInitials(name, id) {
     if (name) {
       const parts = name.trim().split(/\s+/)
-      if (parts.length >= 2) {
-        return (parts[0][0] + parts[1][0]).toUpperCase()
-      }
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
       return name.slice(0, 2).toUpperCase()
     }
     return (id || 'ST').slice(0, 2).toUpperCase()
@@ -124,19 +114,18 @@ export default function Overview({ onNavigate }) {
   return (
     <div className="flex flex-col">
       {/* Header Row */}
-      <div className="flex justify-between items-start pb-6 border-b border-[#E6E4DD]">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-5 sm:pb-6 border-b border-[#E6E4DD] gap-4">
         <div>
-          <h1 className="font-serif font-bold text-[34px] leading-tight tracking-[-0.02em] text-[#141413]">
+          <h1 className="font-serif font-bold text-2xl sm:text-[34px] leading-tight tracking-[-0.02em] text-[#141413]">
             Today's Attendance
           </h1>
-          <p className="text-sm text-[#5C5A55] mt-1">
+          <p className="text-xs sm:text-sm text-[#5C5A55] mt-1">
             {formattedDate} &bull; Cutoff {cutoff}
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Status Chip */}
-          <div className="bg-[#F4F3EE] border border-[#E6E4DD] rounded-xl px-3.5 py-2 flex items-center gap-2">
+        <div className="flex items-center gap-2.5 w-full sm:w-auto justify-between sm:justify-start">
+          <div className="bg-[#F4F3EE] border border-[#E6E4DD] rounded-xl px-3 py-1.5 sm:px-3.5 sm:py-2 flex items-center gap-2 shrink-0">
             <span className="w-2 h-2 rounded-full bg-[#7B9478]" />
             <div className="text-xs leading-none">
               <span className="font-medium text-[#141413]">Kiosk-01</span>
@@ -144,30 +133,22 @@ export default function Overview({ onNavigate }) {
             </div>
           </div>
 
-          {/* Primary CTA */}
           <button
             onClick={() => onNavigate && onNavigate('enroll')}
-            className="bg-[#141413] hover:bg-black text-white text-sm font-medium px-5 py-2.5 rounded-full transition-colors flex items-center gap-1.5 shadow-sm"
+            className="bg-[#141413] hover:bg-black text-white text-xs sm:text-sm font-medium px-4 sm:px-5 py-2 sm:py-2.5 rounded-full transition-colors flex items-center gap-1.5 shadow-sm shrink-0"
           >
             <span>+ Enroll Student</span>
           </button>
         </div>
       </div>
 
-      {/* Open Hairline Metrics Band (5 Columns) */}
-      <div className="grid grid-cols-5 py-7 border-b border-[#E6E4DD] items-center">
+      {/* Hairline Metrics Band (Responsive: stack/grid on mobile) */}
+      <div className="flex flex-col sm:grid sm:grid-cols-5 py-5 sm:py-7 border-b border-[#E6E4DD] items-center gap-4 sm:gap-0">
         {/* Col 1: Donut Progress Ring */}
         <div className="flex items-center justify-center">
-          <div className="relative w-24 h-24 flex items-center justify-center">
-            <svg className="w-24 h-24 transform -rotate-90" viewBox="0 0 96 96">
-              <circle
-                cx="48"
-                cy="48"
-                r={radius}
-                stroke="#E6E4DD"
-                strokeWidth="7"
-                fill="none"
-              />
+          <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center">
+            <svg className="w-20 h-20 sm:w-24 sm:h-24 transform -rotate-90" viewBox="0 0 96 96">
+              <circle cx="48" cy="48" r={radius} stroke="#E6E4DD" strokeWidth="7" fill="none" />
               <circle
                 cx="48"
                 cy="48"
@@ -182,64 +163,67 @@ export default function Overview({ onNavigate }) {
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-              <span className="font-serif font-bold text-[22px] leading-tight text-[#141413] tabular-nums">
+              <span className="font-serif font-bold text-lg sm:text-[22px] leading-tight text-[#141413] tabular-nums">
                 {onTimePct}%
               </span>
-              <span className="text-[11px] text-[#5C5A55] font-medium leading-none mt-0.5">
+              <span className="text-[10px] sm:text-[11px] text-[#5C5A55] font-medium leading-none mt-0.5">
                 On-Time
               </span>
             </div>
           </div>
         </div>
 
-        {/* Col 2: Enrolled */}
-        <div className="border-l border-[#E6E4DD] flex flex-col items-center justify-center py-1">
-          <span className="font-serif font-medium text-[44px] leading-none text-[#141413] tabular-nums">
-            {totalEnrolled}
-          </span>
-          <span className="text-xs text-[#5C5A55] font-medium mt-1.5">
-            Enrolled
-          </span>
-        </div>
+        {/* Cols 2-5: Responsive 4-Column Grid on Mobile */}
+        <div className="grid grid-cols-4 w-full divide-x divide-[#E6E4DD] sm:contents">
+          {/* Enrolled */}
+          <div className="sm:border-l sm:border-[#E6E4DD] flex flex-col items-center justify-center py-1">
+            <span className="font-serif font-medium text-2xl sm:text-[44px] leading-none text-[#141413] tabular-nums">
+              {totalEnrolled}
+            </span>
+            <span className="text-[11px] sm:text-xs text-[#5C5A55] font-medium mt-1">
+              Enrolled
+            </span>
+          </div>
 
-        {/* Col 3: Present */}
-        <div className="border-l border-[#E6E4DD] flex flex-col items-center justify-center py-1">
-          <span className="font-serif font-medium text-[44px] leading-none text-[#141413] tabular-nums">
-            {presentCount}
-          </span>
-          <span className="text-xs text-[#5C5A55] font-medium mt-1.5">
-            Present
-          </span>
-        </div>
+          {/* Present */}
+          <div className="sm:border-l sm:border-[#E6E4DD] flex flex-col items-center justify-center py-1">
+            <span className="font-serif font-medium text-2xl sm:text-[44px] leading-none text-[#141413] tabular-nums">
+              {presentCount}
+            </span>
+            <span className="text-[11px] sm:text-xs text-[#5C5A55] font-medium mt-1">
+              Present
+            </span>
+          </div>
 
-        {/* Col 4: Late */}
-        <div className="border-l border-[#E6E4DD] flex flex-col items-center justify-center py-1">
-          <span className="font-serif font-medium text-[44px] leading-none text-[#141413] tabular-nums">
-            {lateCount}
-          </span>
-          <span className="text-xs text-[#5C5A55] font-medium mt-1.5">
-            Late
-          </span>
-        </div>
+          {/* Late */}
+          <div className="sm:border-l sm:border-[#E6E4DD] flex flex-col items-center justify-center py-1">
+            <span className="font-serif font-medium text-2xl sm:text-[44px] leading-none text-[#141413] tabular-nums">
+              {lateCount}
+            </span>
+            <span className="text-[11px] sm:text-xs text-[#5C5A55] font-medium mt-1">
+              Late
+            </span>
+          </div>
 
-        {/* Col 5: Absent */}
-        <div className="border-l border-[#E6E4DD] flex flex-col items-center justify-center py-1">
-          <span className="font-serif font-medium text-[44px] leading-none text-[#141413] tabular-nums">
-            {absentCount}
-          </span>
-          <span className="text-xs text-[#5C5A55] font-medium mt-1.5">
-            Absent
-          </span>
+          {/* Absent */}
+          <div className="sm:border-l sm:border-[#E6E4DD] flex flex-col items-center justify-center py-1">
+            <span className="font-serif font-medium text-2xl sm:text-[44px] leading-none text-[#141413] tabular-nums">
+              {absentCount}
+            </span>
+            <span className="text-[11px] sm:text-xs text-[#5C5A55] font-medium mt-1">
+              Absent
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Filter & Search Row */}
-      <div className="flex justify-between items-center my-6">
+      {/* Filter & Search Row (Responsive flex-col on mobile) */}
+      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 my-4 sm:my-6">
         {/* Filter Pills */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 sm:pb-0">
           <button
             onClick={() => setStatusFilter('all')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors shrink-0 ${
               statusFilter === 'all'
                 ? 'bg-[#C9C4B8] text-[#141413]'
                 : 'bg-[#E7E4DC] text-[#5C5A55] hover:text-[#141413]'
@@ -249,7 +233,7 @@ export default function Overview({ onNavigate }) {
           </button>
           <button
             onClick={() => setStatusFilter('PRESENT')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors shrink-0 ${
               statusFilter === 'PRESENT'
                 ? 'bg-[#C9C4B8] text-[#141413]'
                 : 'bg-[#E7E4DC] text-[#5C5A55] hover:text-[#141413]'
@@ -259,7 +243,7 @@ export default function Overview({ onNavigate }) {
           </button>
           <button
             onClick={() => setStatusFilter('LATE')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors shrink-0 ${
               statusFilter === 'LATE'
                 ? 'bg-[#C9C4B8] text-[#141413]'
                 : 'bg-[#E7E4DC] text-[#5C5A55] hover:text-[#141413]'
@@ -269,7 +253,7 @@ export default function Overview({ onNavigate }) {
           </button>
           <button
             onClick={() => setStatusFilter('ABSENT')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors shrink-0 ${
               statusFilter === 'ABSENT'
                 ? 'bg-[#C9C4B8] text-[#141413]'
                 : 'bg-[#E7E4DC] text-[#5C5A55] hover:text-[#141413]'
@@ -280,13 +264,13 @@ export default function Overview({ onNavigate }) {
         </div>
 
         {/* Search Input */}
-        <div className="relative w-60">
+        <div className="relative w-full sm:w-60">
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search students..."
-            className="w-full h-[38px] bg-white border border-[#DCD9D0] rounded-lg pl-3.5 pr-9 text-sm text-[#141413] placeholder-[#8A867E] focus:outline-none focus:border-[#166534]"
+            className="w-full h-[38px] bg-white border border-[#DCD9D0] rounded-lg pl-3.5 pr-9 text-xs sm:text-sm text-[#141413] placeholder-[#8A867E] focus:outline-none focus:border-[#166534]"
           />
           <svg
             className="w-4 h-4 text-[#8A867E] absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -303,9 +287,9 @@ export default function Overview({ onNavigate }) {
         </div>
       </div>
 
-      {/* Open Hairline Roster Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+      {/* Responsive Hairline Roster Table Container */}
+      <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+        <table className="w-full text-left border-collapse min-w-[540px]">
           <thead>
             <tr className="border-b border-[#E6E4DD] text-xs font-semibold text-[#8A867E] uppercase tracking-wider">
               <th className="py-2.5 font-medium">Student</th>
@@ -317,25 +301,24 @@ export default function Overview({ onNavigate }) {
           </thead>
           <tbody>
             {loading ? (
-              // Skeleton loading
-              [...Array(6)].map((_, i) => (
+              [...Array(4)].map((_, i) => (
                 <tr key={i} className="h-[58px] border-b border-[#E6E4DD] animate-pulse">
                   <td className="py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-[34px] h-[34px] rounded-full bg-[#E7E4DC]" />
-                      <div className="h-4 bg-[#E7E4DC] rounded w-36" />
+                      <div className="h-4 bg-[#E7E4DC] rounded w-32" />
                     </div>
                   </td>
-                  <td className="py-3"><div className="h-4 bg-[#E7E4DC] rounded w-24" /></td>
+                  <td className="py-3"><div className="h-4 bg-[#E7E4DC] rounded w-20" /></td>
                   <td className="py-3"><div className="h-4 bg-[#E7E4DC] rounded w-16" /></td>
                   <td className="py-3"><div className="h-4 bg-[#E7E4DC] rounded w-12" /></td>
-                  <td className="py-3 text-right"><div className="h-7 bg-[#E7E4DC] rounded-full w-20 ml-auto" /></td>
+                  <td className="py-3 text-right"><div className="h-7 bg-[#E7E4DC] rounded-full w-18 ml-auto" /></td>
                 </tr>
               ))
             ) : filteredRecords.length === 0 ? (
               <tr>
                 <td colSpan="5" className="py-12 text-center text-sm text-[#8A867E]">
-                  No student records found matching this filter.
+                  No student attendance recorded yet. Enroll a student to get started.
                 </td>
               </tr>
             ) : (
@@ -344,7 +327,7 @@ export default function Overview({ onNavigate }) {
                 const isAbsent = status === 'ABSENT'
                 const initials = getInitials(r.full_name, r.user_id)
 
-                let statusBadgeColor = 'bg-[#7B9478]' // default present
+                let statusBadgeColor = 'bg-[#7B9478]'
                 let statusLabel = 'Present'
                 if (status === 'LATE') {
                   statusBadgeColor = 'bg-[#B58E43]'
@@ -361,42 +344,37 @@ export default function Overview({ onNavigate }) {
                     className="h-[58px] border-b border-[#E6E4DD] hover:bg-[#FAF9F6] transition-colors cursor-pointer group"
                     title="Click to view/edit student details"
                   >
-                    {/* Student Column: Avatar + ID + Name */}
                     <td className="py-2.5">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2.5 sm:gap-3">
                         <div className="w-[34px] h-[34px] rounded-full bg-[#D9D4C9] text-[#141413] flex items-center justify-center text-xs font-semibold shrink-0">
                           {initials}
                         </div>
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-sm font-medium text-[#141413] tabular-nums">
+                        <div className="flex flex-col sm:flex-row sm:items-baseline sm:gap-2">
+                          <span className="text-xs sm:text-sm font-medium text-[#141413] tabular-nums">
                             {r.user_id}
                           </span>
-                          <span className="text-sm text-[#5C5A55]">
+                          <span className="text-xs sm:text-sm text-[#5C5A55]">
                             {r.full_name || 'Unnamed'}
                           </span>
                         </div>
                       </div>
                     </td>
 
-                    {/* Department */}
-                    <td className="py-2.5 text-sm text-[#5C5A55]">
+                    <td className="py-2.5 text-xs sm:text-sm text-[#5C5A55]">
                       {r.department || 'General'}
                     </td>
 
-                    {/* Check-In Time */}
-                    <td className="py-2.5 text-sm text-[#141413] tabular-nums">
+                    <td className="py-2.5 text-xs sm:text-sm text-[#141413] tabular-nums">
                       {isAbsent ? '—' : formatTime(r.check_in_time)}
                     </td>
 
-                    {/* Confidence */}
-                    <td className="py-2.5 text-sm text-[#141413] tabular-nums">
+                    <td className="py-2.5 text-xs sm:text-sm text-[#141413] tabular-nums">
                       {isAbsent || !r.confidence_score ? '—' : `${Number(r.confidence_score).toFixed(1)}%`}
                     </td>
 
-                    {/* Status Pill */}
                     <td className="py-2.5 text-right pr-2">
                       <span
-                        className={`inline-flex items-center justify-center min-w-[78px] h-7 px-3 rounded-full text-white text-[13px] font-medium leading-none ${statusBadgeColor}`}
+                        className={`inline-flex items-center justify-center min-w-[70px] sm:min-w-[78px] h-6 sm:h-7 px-2.5 rounded-full text-white text-xs sm:text-[13px] font-medium leading-none ${statusBadgeColor}`}
                       >
                         {statusLabel}
                       </span>
@@ -409,23 +387,23 @@ export default function Overview({ onNavigate }) {
         </table>
       </div>
 
-      {/* Edit User Modal (preserves full CRUD management) */}
+      {/* Edit User Modal */}
       {editingUser && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-[#E6E4DD] shadow-xl">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 border border-[#E6E4DD] shadow-xl">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-serif font-bold text-lg text-[#141413]">
                 Edit Student Details
               </h3>
               <button
                 onClick={() => setEditingUser(null)}
-                className="text-[#8A867E] hover:text-[#141413] text-xl leading-none"
+                className="text-[#8A867E] hover:text-[#141413] text-2xl leading-none"
               >
                 &times;
               </button>
             </div>
 
-            <form onSubmit={saveUserChanges} className="space-y-4">
+            <form onSubmit={saveUserChanges} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-medium text-[#5C5A55] mb-1">Student ID</label>
                 <input

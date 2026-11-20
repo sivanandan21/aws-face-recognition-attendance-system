@@ -27,54 +27,25 @@ export async function fetchAttendance(dateStr, department) {
     return await res.json()
   } catch (err) {
     console.warn('API fetch fallback:', err)
+    const localLogs = JSON.parse(localStorage.getItem('smart_attendance_logs') || '[]')
+    const filtered = dateStr ? localLogs.filter(l => (l.check_in_time || '').startsWith(dateStr)) : localLogs
     return {
       session_key: `CLASS#${dateStr || new Date().toISOString().split('T')[0]}`,
       date: dateStr || new Date().toISOString().split('T')[0],
-      count: 4,
-      records: [
-        {
-          user_id: 'STU101',
-          full_name: 'Aarav Patel',
-          department: 'Computer Science',
-          check_in_time: `${dateStr || '2026-11-20'}T08:52:14+05:30`,
-          status: 'PRESENT',
-          confidence_score: 98.4,
-          device_id: 'kiosk-01'
-        },
-        {
-          user_id: 'STU102',
-          full_name: 'Priya Sharma',
-          department: 'Electronics',
-          check_in_time: `${dateStr || '2026-11-20'}T09:05:40+05:30`,
-          status: 'PRESENT',
-          confidence_score: 96.1,
-          device_id: 'kiosk-01'
-        },
-        {
-          user_id: 'STU103',
-          full_name: 'Vikram Singh',
-          department: 'Mechanical',
-          check_in_time: `${dateStr || '2026-11-20'}T09:22:10+05:30`,
-          status: 'LATE',
-          confidence_score: 95.8,
-          device_id: 'kiosk-01'
-        },
-        {
-          user_id: 'STU104',
-          full_name: 'Ananya Reddy',
-          department: 'Computer Science',
-          check_in_time: `${dateStr || '2026-11-20'}T08:41:05+05:30`,
-          status: 'PRESENT',
-          confidence_score: 99.2,
-          device_id: 'kiosk-01'
-        }
-      ]
+      count: filtered.length,
+      records: filtered
     }
   }
 }
 
 export async function fetchUsers() {
-  const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const MOCK_IDS = new Set(['22222', 'STU101', 'STU102', 'STU103', 'STU104', 'STU105'])
+  const rawLocal = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const localUsers = rawLocal.filter(u => !MOCK_IDS.has(u.user_id))
+  if (localUsers.length !== rawLocal.length) {
+    localStorage.setItem('smart_attendance_users', JSON.stringify(localUsers))
+  }
+
   const url = `${BASE_URL}/users`
   try {
     const res = await fetch(url, { headers: getHeaders() })
@@ -82,36 +53,38 @@ export async function fetchUsers() {
     const remoteUsers = await res.json()
     const merged = [...localUsers]
     remoteUsers.forEach(ru => {
-      const match = merged.find(m => m.user_id === ru.user_id)
-      if (!match) {
-        merged.push(ru)
-      } else {
-        if ((!match.images || match.images.length === 0) && ru.images && ru.images.length > 0) {
-          match.images = ru.images
+      if (!MOCK_IDS.has(ru.user_id)) {
+        const match = merged.find(m => m.user_id === ru.user_id)
+        if (!match) {
+          merged.push(ru)
+        } else {
+          if ((!match.images || match.images.length === 0) && ru.images && ru.images.length > 0) {
+            match.images = ru.images
+          }
         }
       }
     })
     return merged
   } catch (err) {
-    const defaultRoster = [
-      { user_id: '22222', full_name: 'vigu', department: 'Computer Science & Engineering', email: 'sivapn721@gmail.com', active: true },
-      { user_id: 'STU101', full_name: 'Aarav Patel', department: 'Computer Science', email: 'aarav@vit.ac.in', active: true },
-      { user_id: 'STU102', full_name: 'Priya Sharma', department: 'Electronics', email: 'priya@vit.ac.in', active: true },
-      { user_id: 'STU103', full_name: 'Vikram Singh', department: 'Mechanical', email: 'vikram@vit.ac.in', active: true },
-      { user_id: 'STU104', full_name: 'Ananya Reddy', department: 'Computer Science', email: 'ananya@vit.ac.in', active: true },
-      { user_id: 'STU105', full_name: 'Rohan Verma', department: 'Civil', email: 'rohan@vit.ac.in', active: true }
-    ]
-    const merged = [...localUsers]
-    defaultRoster.forEach(dr => {
-      if (!merged.some(m => m.user_id === dr.user_id)) {
-        merged.push(dr)
-      }
-    })
-    return merged
+    return localUsers
   }
 }
 
 export async function checkInStudent(data) {
+  // Store to local logs
+  const localLogs = JSON.parse(localStorage.getItem('smart_attendance_logs') || '[]')
+  const newRecord = {
+    user_id: data.user_id,
+    full_name: data.name,
+    department: data.department || 'General',
+    check_in_time: data.timestamp || new Date().toISOString(),
+    status: 'PRESENT',
+    confidence_score: data.confidence,
+    device_id: data.device_id || 'web-kiosk-live'
+  }
+  const updatedLogs = [newRecord, ...localLogs.filter(l => l.user_id !== data.user_id)]
+  localStorage.setItem('smart_attendance_logs', JSON.stringify(updatedLogs))
+
   const url = `${BASE_URL}/check-in`
   try {
     const res = await fetch(url, {
@@ -125,14 +98,13 @@ export async function checkInStudent(data) {
     }
     return await res.json()
   } catch (err) {
-    console.warn('Check-in API endpoint unavailable, simulating fallback check-in:', err)
     return {
       status: 'PRESENT',
-      user_id: '22222',
-      name: 'vigu',
-      department: 'Computer Science & Engineering',
-      confidence: 98.6,
-      message: 'Attendance recorded as PRESENT for vigu'
+      user_id: data.user_id,
+      name: data.name,
+      department: data.department,
+      confidence: data.confidence || 98.0,
+      message: `Attendance recorded as PRESENT for ${data.name}`
     }
   }
 }

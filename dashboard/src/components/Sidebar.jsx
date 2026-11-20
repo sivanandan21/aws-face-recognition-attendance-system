@@ -3,24 +3,15 @@ import React from 'react'
 export function FaceBrandLogo({ className = "w-9 h-9" }) {
   return (
     <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-      {/* 4 Corner Viewfinder Brackets */}
       <path d="M5 12V7C5 5.89543 5.89543 5 7 5H12" stroke="#141413" strokeWidth="1.8" strokeLinecap="round" />
       <path d="M24 5H29C30.1046 5 31 5.89543 31 7V12" stroke="#141413" strokeWidth="1.8" strokeLinecap="round" />
       <path d="M31 24V29C31 30.1046 30.1046 31 29 31H24" stroke="#141413" strokeWidth="1.8" strokeLinecap="round" />
       <path d="M12 31H7C5.89543 31 5 30.1046 5 29V24" stroke="#141413" strokeWidth="1.8" strokeLinecap="round" />
-      
-      {/* Eyebrows */}
       <path d="M10.5 13H14.5" stroke="#141413" strokeWidth="1.6" strokeLinecap="round" />
       <path d="M21.5 13H25.5" stroke="#141413" strokeWidth="1.6" strokeLinecap="round" />
-      
-      {/* Eyes */}
       <circle cx="12.5" cy="16.5" r="1.1" fill="#141413" />
       <circle cx="23.5" cy="16.5" r="1.1" fill="#141413" />
-      
-      {/* Nose */}
       <path d="M18 15V20.5H16.5" stroke="#141413" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      
-      {/* Mouth */}
       <path d="M13 24.5C14.5 25.5 21.5 25.5 23 24.5" stroke="#141413" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   )
@@ -85,14 +76,38 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   ]
 
   return (
-    <aside className="w-[76px] shrink-0 bg-[#FAF9F6] border-r border-[#E6E4DD] flex flex-col items-center py-6 select-none">
-      {/* Brand Icon Mark */}
-      <div className="mb-11 mt-1 cursor-pointer" onClick={() => setActiveTab('overview')} title="Smart Attendance">
-        <FaceBrandLogo className="w-9 h-9" />
-      </div>
+    <>
+      {/* Desktop Fixed Left Rail (hidden on mobile, visible md+) */}
+      <aside className="hidden md:flex w-[76px] shrink-0 bg-[#FAF9F6] border-r border-[#E6E4DD] flex-col items-center py-6 select-none">
+        <div className="mb-11 mt-1 cursor-pointer" onClick={() => setActiveTab('overview')} title="Smart Attendance">
+          <FaceBrandLogo className="w-9 h-9" />
+        </div>
 
-      {/* Nav Items */}
-      <nav className="flex-1 flex flex-col items-center gap-[18px]">
+        <nav className="flex-1 flex flex-col items-center gap-[18px]">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const isActive = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                aria-label={item.label}
+                title={item.label}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-150 relative ${
+                  isActive
+                    ? 'bg-[#141413] text-white shadow-[0_6px_14px_rgba(20,20,19,0.18)]'
+                    : 'bg-transparent text-[#5C5A55] hover:bg-[#ECEAE3] hover:text-[#141413]'
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+              </button>
+            )
+          })}
+        </nav>
+      </aside>
+
+      {/* Mobile Bottom Navigation Bar (visible < md, hidden on desktop) */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 h-16 bg-[#FAF9F6]/95 backdrop-blur-md border-t border-[#E6E4DD] z-50 px-3 flex items-center justify-around shadow-lg">
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive = activeTab === item.id
@@ -101,11 +116,10 @@ export default function Sidebar({ activeTab, setActiveTab }) {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               aria-label={item.label}
-              title={item.label}
-              className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-150 relative ${
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
                 isActive
-                  ? 'bg-[#141413] text-white shadow-[0_6px_14px_rgba(20,20,19,0.18)]'
-                  : 'bg-transparent text-[#5C5A55] hover:bg-[#ECEAE3] hover:text-[#141413]'
+                  ? 'bg-[#141413] text-white shadow-[0_4px_10px_rgba(20,20,19,0.2)]'
+                  : 'text-[#5C5A55] hover:text-[#141413]'
               }`}
             >
               <Icon className="w-5 h-5" />
@@ -113,6 +127,6 @@ export default function Sidebar({ activeTab, setActiveTab }) {
           )
         })}
       </nav>
-    </aside>
+    </>
   )
 }
