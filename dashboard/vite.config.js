@@ -323,6 +323,7 @@ export default defineConfig({
   plugins: [react(), mockApiPlugin()],
   server: {
     port: 3000,
-    host: true
+    host: true,
+    allowedHosts: true
   }
 })
