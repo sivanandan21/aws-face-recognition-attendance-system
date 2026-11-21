@@ -12,6 +12,7 @@ export default function LiveKiosk({ onScanSuccess }) {
   const [recentVerifications, setRecentVerifications] = useState([])
   const [activeDetections, setActiveDetections] = useState([])
   const [removingId, setRemovingId] = useState(null)
+  const [toastMessage, setToastMessage] = useState('')
 
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
@@ -234,6 +235,8 @@ export default function LiveKiosk({ onScanSuccess }) {
       cooldownMap.current.delete(userId)
       // 3. Call API to remove record from DB / storage
       await removeAttendanceRecord(userId)
+      setToastMessage(`✓ Attendance record for ${userName || userId} removed.`)
+      setTimeout(() => setToastMessage(''), 3500)
       if (onScanSuccess) onScanSuccess()
     } catch (err) {
       console.error('Failed to remove verification:', err)
@@ -352,6 +355,22 @@ export default function LiveKiosk({ onScanSuccess }) {
           )}
         </div>
       </div>
+
+      {/* Action Notification Toast Banner */}
+      {toastMessage && (
+        <div className="mt-3 py-2 px-4 bg-[#FAF9F6] border border-[#E6E4DD] rounded-xl text-xs font-medium text-[#141413] flex items-center justify-between transition-all shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#166534]" />
+            <span>{toastMessage}</span>
+          </div>
+          <button
+            onClick={() => setToastMessage('')}
+            className="text-[#8A867E] hover:text-[#141413] ml-3 text-sm leading-none"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       {/* 2-Column Studio Split (Collapses to 1-col on mobile) */}
       <div className="grid grid-cols-1 lg:grid-cols-[1.85fr_1fr] gap-6 lg:gap-8 mt-5 sm:mt-6">
