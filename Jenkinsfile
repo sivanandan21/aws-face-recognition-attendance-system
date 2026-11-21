@@ -52,8 +52,12 @@ pipeline {
         stage('Deploy / Reload Service') {
             steps {
                 sh '''
-                    echo "=== Reloading Production PM2 Daemon ==="
-                    sudo -u ubuntu PM2_HOME=/home/ubuntu/.pm2 pm2 restart attendance-dashboard || pm2 restart attendance-dashboard || true
+                    echo "=== Deploying to Live Production & Restarting PM2 ==="
+                    if [ -d "/home/ubuntu/aws-face-recognition-attendance-system" ]; then
+                        sudo -u ubuntu bash -c 'cd /home/ubuntu/aws-face-recognition-attendance-system && git pull && pm2 restart attendance-dashboard' || true
+                    else
+                        pm2 restart attendance-dashboard || true
+                    fi
                 '''
             }
         }
