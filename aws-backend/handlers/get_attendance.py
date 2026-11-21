@@ -29,13 +29,18 @@ def json_response(status_code: int, body: Any) -> Dict[str, Any]:
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Content-Type,x-api-key,Authorization",
-            "Access-Control-Allow-Methods": "GET,OPTIONS",
+            "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS",
         },
         "body": json.dumps(body),
     }
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    method = (
+        event.get("httpMethod")
+        or event.get("requestContext", {}).get("http", {}).get("method", "GET")
+    ).upper()
+
     params = event.get("queryStringParameters", {}) or {}
     date_str = params.get("date") or datetime.now(IST).strftime("%Y-%m-%d")
     department = params.get("department")
@@ -43,6 +48,34 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     session_key = f"CLASS#{date_str}"
     att_table = dynamodb.Table(ATTENDANCE_TABLE)
     users_table = dynamodb.Table(USERS_TABLE)
+
+    # Handle DELETE attendance record (e.g., removing a student checked in by mistake)
+    if method == "DELETE":
+        user_id = params.get("user_id")
+        if not user_id:
+            try:
+                body = json.loads(event.get("body", "{}"))
+                user_id = body.get("user_id")
+            except Exception:
+                pass
+        if not user_id:
+            return json_response(400, {"error": "Missing user_id parameter"})
+
+        try:
+            att_table.delete_item(
+                Key={"session_key": session_key, "user_id": user_id}
+            )
+            return json_response(
+                200,
+                {
+                    "status": "DELETED",
+                    "message": f"Attendance record for {user_id} removed from session {session_key}.",
+                    "user_id": user_id,
+                    "session_key": session_key,
+                },
+            )
+        except Exception as e:
+            return json_response(500, {"error": "Failed to remove attendance record", "details": str(e)})
 
     try:
         # 1. Query attendance records for the date

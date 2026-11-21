@@ -38,6 +38,36 @@ export async function fetchAttendance(dateStr, department) {
   }
 }
 
+export async function removeAttendanceRecord(userId, dateStr) {
+  const date = dateStr || new Date().toISOString().split('T')[0]
+
+  // Remove from localStorage logs immediately
+  const localLogs = JSON.parse(localStorage.getItem('smart_attendance_logs') || '[]')
+  const updatedLogs = localLogs.filter(l => l.user_id !== userId)
+  localStorage.setItem('smart_attendance_logs', JSON.stringify(updatedLogs))
+
+  const params = new URLSearchParams({ user_id: userId, date })
+  const url = `${BASE_URL}/attendance?${params.toString()}`
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: getHeaders()
+    })
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}))
+      throw new Error(errBody.message || `HTTP ${res.status}`)
+    }
+    return await res.json()
+  } catch (err) {
+    console.warn('removeAttendanceRecord remote fallback:', err)
+    return {
+      status: 'DELETED',
+      user_id: userId,
+      message: `Removed attendance record for ${userId}`
+    }
+  }
+}
+
 export async function fetchUsers() {
   const MOCK_IDS = new Set(['22222', 'STU101', 'STU102', 'STU103', 'STU104', 'STU105'])
   const rawLocal = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')

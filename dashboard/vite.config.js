@@ -139,6 +139,24 @@ function mockApiPlugin() {
           return
         }
 
+        if (url.pathname === '/attendance' && req.method === 'DELETE') {
+          const userIdParam = url.searchParams.get('user_id')
+          if (!userIdParam) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Missing user_id parameter' }))
+            return
+          }
+          attendanceRecords = attendanceRecords.filter(r => r.user_id !== userIdParam)
+          res.setHeader('Content-Type', 'application/json')
+          res.statusCode = 200
+          res.end(JSON.stringify({
+            status: 'DELETED',
+            message: `Attendance record for ${userIdParam} removed`,
+            user_id: userIdParam
+          }))
+          return
+        }
+
         if (url.pathname === '/users' && req.method === 'GET') {
           res.setHeader('Content-Type', 'application/json')
           res.statusCode = 200

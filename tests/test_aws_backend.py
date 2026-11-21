@@ -399,3 +399,35 @@ def test_remove_face_success():
         assert body["total_faces"] == 1
         mock_disassoc.assert_called_once()
         mock_del.assert_called_once()
+
+
+def test_remove_attendance_record_success():
+    event = {
+        "httpMethod": "DELETE",
+        "queryStringParameters": {"user_id": "STU101", "date": "2026-11-21"},
+    }
+    mock_table = MagicMock()
+    with patch.object(get_attendance.dynamodb, "Table", return_value=mock_table):
+        resp = get_attendance.lambda_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["status"] == "DELETED"
+        assert body["user_id"] == "STU101"
+        assert body["session_key"] == "CLASS#2026-11-21"
+        mock_table.delete_item.assert_called_once_with(
+            Key={"session_key": "CLASS#2026-11-21", "user_id": "STU101"}
+        )
+
+
+def test_remove_attendance_record_missing_user_id():
+    event = {
+        "httpMethod": "DELETE",
+        "queryStringParameters": {"date": "2026-11-21"},
+    }
+    mock_table = MagicMock()
+    with patch.object(get_attendance.dynamodb, "Table", return_value=mock_table):
+        resp = get_attendance.lambda_handler(event, None)
+        assert resp["statusCode"] == 400
+        body = json.loads(resp["body"])
+        assert "Missing user_id parameter" in body["error"]
+

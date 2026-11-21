@@ -202,7 +202,7 @@ Resources:
       CodeUri: handlers/
       Handler: get_attendance.lambda_handler
       Policies:
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref AttendanceLogsTable
         - DynamoDBReadPolicy:
             TableName: !Ref UsersTable
@@ -213,6 +213,12 @@ Resources:
             ApiId: !Ref HttpAttendanceApi
             Path: /attendance
             Method: get
+        DeleteAttendance:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpAttendanceApi
+            Path: /attendance
+            Method: delete
 
   UsersQueryFunction:
     Type: AWS::Serverless::Function

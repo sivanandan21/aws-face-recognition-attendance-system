@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { checkInStudent, fetchUsers, fetchAttendance } from '../services/api'
+import { checkInStudent, fetchUsers, fetchAttendance, removeAttendanceRecord } from '../services/api'
 import { detectAndMatchAllFaces, loadModels } from '../services/faceMatcher'
 
 export default function LiveKiosk({ onScanSuccess }) {
@@ -11,6 +11,7 @@ export default function LiveKiosk({ onScanSuccess }) {
   const [enrolledUsers, setEnrolledUsers] = useState([])
   const [recentVerifications, setRecentVerifications] = useState([])
   const [activeDetections, setActiveDetections] = useState([])
+  const [removingId, setRemovingId] = useState(null)
 
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
@@ -194,7 +195,7 @@ export default function LiveKiosk({ onScanSuccess }) {
             minute: '2-digit',
             hour12: true
           }).format(new Date())
-          
+
           checkInStudent({
             user_id: face.user.user_id,
             name: face.user.full_name,
@@ -218,6 +219,27 @@ export default function LiveKiosk({ onScanSuccess }) {
           if (onScanSuccess) onScanSuccess()
         }
       }
+    }
+  }
+
+  async function handleRemoveVerification(userId, userName) {
+    if (!window.confirm(`Remove ${userName || userId} from present attendance for today?`)) {
+      return
+    }
+    setRemovingId(userId)
+    try {
+      // 1. Remove from local live state
+      setRecentVerifications(prev => prev.filter(r => r.user_id !== userId))
+      // 2. Clear cooldown so they can be re-scanned if needed
+      cooldownMap.current.delete(userId)
+      // 3. Call API to remove record from DB / storage
+      await removeAttendanceRecord(userId)
+      if (onScanSuccess) onScanSuccess()
+    } catch (err) {
+      console.error('Failed to remove verification:', err)
+      alert(`Could not remove record: ${err.message}`)
+    } finally {
+      setRemovingId(null)
     }
   }
 
@@ -405,9 +427,16 @@ export default function LiveKiosk({ onScanSuccess }) {
         {/* Right Column: Recent Verifications (Responsive on mobile) */}
         <div className="border-t lg:border-t-0 lg:border-l border-[#E6E4DD] pt-5 lg:pt-0 lg:pl-7 flex flex-col justify-between">
           <div>
-            <h3 className="font-semibold text-sm sm:text-base text-[#141413] pb-3 border-b border-[#E6E4DD]">
-              Recent Verifications
-            </h3>
+            <div className="flex items-center justify-between pb-3 border-b border-[#E6E4DD]">
+              <h3 className="font-semibold text-sm sm:text-base text-[#141413]">
+                Recent Verifications
+              </h3>
+              {recentVerifications.length > 0 && (
+                <span className="text-[11px] text-[#5C5A55] tabular-nums font-medium bg-[#F4F3EE] px-2 py-0.5 rounded-full">
+                  {recentVerifications.length} Present
+                </span>
+              )}
+            </div>
 
             <div className="divide-y divide-[#E6E4DD]">
               {recentVerifications.length === 0 ? (
@@ -418,29 +447,52 @@ export default function LiveKiosk({ onScanSuccess }) {
                 recentVerifications.map((item, idx) => {
                   const initials = getInitials(item.full_name, item.user_id)
                   const isLate = item.status === 'LATE'
+                  const isRemoving = removingId === item.user_id
                   return (
-                    <div key={item.user_id || idx} className="py-2.5 sm:py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-2.5 sm:gap-3">
+                    <div key={item.user_id || idx} className="py-2.5 sm:py-3 flex items-center justify-between group gap-2">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                         <div className="w-[32px] h-[32px] sm:w-[34px] sm:h-[34px] rounded-full bg-[#D9D4C9] text-[#141413] flex items-center justify-center text-xs font-semibold shrink-0">
                           {initials}
                         </div>
-                        <div>
-                          <div className="text-xs sm:text-sm font-medium text-[#141413]">
+                        <div className="min-w-0 truncate">
+                          <div className="text-xs sm:text-sm font-medium text-[#141413] truncate">
                             {item.full_name || 'Student'}
                           </div>
-                          <div className="text-[11px] sm:text-xs text-[#5C5A55] tabular-nums mt-0.5">
+                          <div className="text-[11px] sm:text-xs text-[#5C5A55] tabular-nums mt-0.5 truncate">
                             {item.user_id} &bull; {formatTime(item.check_in_time)} &bull; {item.confidence_score ? `${Number(item.confidence_score).toFixed(1)}%` : '98.4%'}
                           </div>
                         </div>
                       </div>
 
-                      <span
-                        className={`inline-flex items-center justify-center min-w-[62px] sm:min-w-[68px] h-5 sm:h-6 px-2 rounded-full text-white text-[11px] sm:text-xs font-medium ${
-                          isLate ? 'bg-[#B58E43]' : 'bg-[#7B9478]'
-                        }`}
-                      >
-                        {isLate ? 'Late' : 'Present'}
-                      </span>
+                      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                        <span
+                          className={`inline-flex items-center justify-center min-w-[56px] sm:min-w-[62px] h-5 sm:h-6 px-2 rounded-full text-white text-[11px] sm:text-xs font-medium ${isLate ? 'bg-[#B58E43]' : 'bg-[#7B9478]'
+                            }`}
+                        >
+                          {isLate ? 'Late' : 'Present'}
+                        </span>
+
+                        {/* Remove Option for Present Students in Live Scan */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveVerification(item.user_id, item.full_name)}
+                          disabled={isRemoving}
+                          title={`Remove ${item.full_name || item.user_id} from present records`}
+                          aria-label={`Remove ${item.full_name || item.user_id}`}
+                          className="h-6 w-6 sm:h-7 sm:w-7 flex items-center justify-center rounded-full text-[#8A867E] hover:text-[#864446] hover:bg-[#864446]/10 active:scale-95 transition-all focus:outline-none"
+                        >
+                          {isRemoving ? (
+                            <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )
                 })
