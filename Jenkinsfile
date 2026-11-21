@@ -16,9 +16,7 @@ pipeline {
         stage('Setup Dependencies') {
             steps {
                 sh '''
-                    echo "=== Installing System & Python Dependencies ==="
-                    sudo apt-get update -y
-                    sudo apt-get install -y python3-venv python3-pip libgl1 libglib2.0-0
+                    echo "=== Setting up Python Virtual Environment & Dependencies ==="
                     python3 -m venv venv || true
                     . venv/bin/activate
                     pip install --upgrade pip
