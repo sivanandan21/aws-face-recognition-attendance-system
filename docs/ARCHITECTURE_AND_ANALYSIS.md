@@ -1,17 +1,12 @@
-# Smart Attendance System: In-Depth Engineering Architecture & Technical Analysis
+# Smart Attendance System: Complete Architectural Documentation & Visual Engineering Guide
 
 ---
 
-## 1. Executive Summary & Problem Domain
+## 1. Smart Attendance System
 
-### 1.1 Context & Background
-Traditional attendance collection mechanisms in academic institutions and enterprise environments suffer from structural inefficiencies, vulnerability to fraud, and operational friction:
-* **Paper-based logs:** Subject to manual signature forgery, buddy attendance, clerical data entry delays, and physical destruction or loss.
-* **RFID / Magnetic Badge Systems:** Prone to badge-swapping (*proxy attendance* or *buddy punching*), where one individual carries multiple credentials for absent peers.
-* **Dedicated Fingerprint / Biometric Terminals:** Present hygiene bottlenecks, high hardware installation and maintenance costs, vendor lock-in, and severe throughput degradation during peak morning entry windows.
-* **Naive Facial Recognition POCs:** Often suffer from single-frame spoofing (photos or phone screens), extreme lighting sensitivity, frame buffer lag on standard USB webcams, identity contamination during enrollment (friends standing in the background), and misidentification when friends resemble each other.
+![Smart Attendance System Platform Architecture](images/01_smart_attendance_system.jpg)
 
-### 1.2 System Mission & Architectural Philosophy
+### 1.1 Executive Overview & Platform Mission
 The **Smart Face Recognition Attendance System** is an enterprise-grade, edge-to-cloud biometric platform engineered to deliver **sub-second, contactless multi-person verification** with **zero friend-swap false positives**, **100% roster accountability**, and **offline-first operational continuity**.
 
 The architecture enforces four foundational design tenets:
@@ -22,219 +17,124 @@ The architecture enforces four foundational design tenets:
 
 ---
 
-## 2. Complete Technology Stack Breakdown
+## 2. The Problem: Traditional Attendance
 
-| Layer | Technology | Version | Purpose & Architectural Justification |
-|---|---|---|---|
-| **Edge Compute & Runtime** | **Python** | `3.12` / `3.8+` | Core execution runtime for computer vision pipelines, multi-threaded hardware webcam drivers, and local validation gates. |
-| **Edge Computer Vision** | **OpenCV (`opencv-python`)** | `4.8+` | Frame acquisition, color space transformations (LAB, Grayscale), CLAHE lighting enhancement, and Laplacian blur analysis. |
-| **Deep Learning Detection** | **Ultralytics YOLOv8-face** | `8.0+` | State-of-the-art single-stage convolutional neural network optimized for robust, multi-angle face bounding box regression under varied orientations. |
-| **Facial Mesh & Liveness** | **Google MediaPipe** | `0.10+` | Real-time 468-point 3D facial landmark regression used for Eye Aspect Ratio (EAR) blink detection and head pose Euler angle extraction. |
-| **Local Storage / Buffer** | **SQLite3** | `3.40+` | Transactional Write-Ahead-Logging (WAL) offline buffer queue for storing check-in records during campus WAN outages. |
-| **Frontend Framework** | **React** | `18.3` | Declarative UI component architecture managing real-time biometric states, live viewfinder overlays, and administrative controls. |
-| **Build & Bundler** | **Vite** | `6.4` | Ultra-fast Hot Module Replacement (HMR) and optimized Rollup-based tree-shaking production bundler. |
-| **Styling & Design System** | **Tailwind CSS** | `3.4` | Utility-first styling engine encoding bespoke luxury architectural tokens (Ceramic `#F5F4F0`, Pine `#166534`, Newsreader Serif). |
-| **In-Browser Vision** | **face-api.js / TensorFlow.js** | `0.22` | Browser-side multi-person face detection (SSD MobileNet V1) and 128-dimensional deep residual facial feature extraction (ResNet). |
-| **Cloud Compute (Serverless)** | **AWS Lambda** | Python 3.12 | Stateless microservice compute layer executing check-in validation, enrollment indexing, and roster queries. |
-| **Biometric Search Engine** | **Amazon Rekognition** | User Vectors | High-dimensional deep biometric embedding database with User Vector Collections, multi-photo clustering, and instant vector similarity search. |
-| **NoSQL Database** | **Amazon DynamoDB** | Single-table concepts | Ultra-low-latency ($< 10\text{ ms}$) NoSQL storage for student directory and daily partitioned attendance records with conditional state locking. |
-| **Blob / Object Storage** | **Amazon S3** | Standard | Archival store for multi-angle enrollment reference photographs and timestamped live audit check-in frames. |
-| **Pub/Sub Alerting** | **Amazon SNS** | Standard | Push notification topics dispatching security alerts for unknown individuals or campus perimeter breaches. |
-| **Host Environment** | **Ubuntu Linux** | `24.04 LTS` | AWS EC2 cloud host (`t3.medium`) hosting reverse proxy and dashboard daemon. |
-| **Web Server / Reverse Proxy**| **Nginx** | `1.24` | High-performance reverse proxy terminating HTTPS via Let's Encrypt SSL and routing web traffic to internal services. |
-| **Process Management** | **PM2** | `5.3+` | Zero-downtime production process daemon managing background web services and automated reboots. |
-| **CI/CD Automation** | **Jenkins** | `2.43+` | Continuous integration and deployment orchestrator triggered via GitHub Webhooks for automated testing, building, and deployment. |
+![Vulnerabilities of Traditional Attendance Systems](images/02_traditional_attendance_problem.png)
+
+### 2.1 Critical Vulnerabilities in Legacy Systems
+Traditional attendance collection mechanisms in academic institutions and enterprise environments suffer from structural inefficiencies, vulnerability to fraud, and operational friction:
+* **Manual Paper Registers:** Subject to signature forgery, lost sheets, manual entry delays, and lack of audit trails.
+* **Buddy Punching & Proxy Attendance:** Students sharing RFID cards, magnetic badges, or barcodes to falsely mark absent peers.
+* **Fingerprint Scanner Bottlenecks:** Hygiene concerns, slow transit throughput during peak morning arrival windows, hardware sensor wear.
+* **Naive Facial POC Vulnerabilities:** Single-frame photo/screen spoofing, severe lighting sensitivity, and USB buffer lag.
+* **Incomplete Roster Tracking:** Legacy systems omit absent students until final manual roll-call reconciliation.
 
 ---
 
-## 3. End-to-End System Architecture
+## 3. Camera Input (Logitech Webcam)
 
-```
-                                 ┌──────────────────────────────────────────────────┐
-                                 │              Edge Kiosk / Web Client             │
-                                 │                                                  │
-┌──────────────────────────┐     │  ┌────────────────────┐   ┌───────────────────┐  │
-│ External Webcam / Laptop │────>│  │ Hardware Capture   │──>│ YOLOv8 / SSD      │  │
-│ 1080p / 720p @ 30 FPS    │     │  │ MJPG Low Latency   │   │ MobileNet-V1      │  │
-└──────────────────────────┘     │  └────────────────────┘   └─────────┬─────────┘  │
-                                 │                                     │            │
-                                 │  ┌──────────────────────────────────▼─────────┐  │
-                                 │  │ Local Quality, Liveness & Matching         │  │
-                                 │  │ • Laplacian Variance Sharpness (>80.0)     │  │
-                                 │  │ • MediaPipe EAR Blink Verification         │  │
-                                 │  │ • Multi-Person ResNet 128-D FaceMatcher    │  │
-                                 │  └──────────────────┬─────────────────────────┘  │
-                                 │                     │                            │
-                                 │  ┌──────────────────▼─────────────────┐          │
-                                 │  │ Centroid Tracker & Cooldown Engine │          │
-                                 │  │ 15s per-face deduplication window  │          │
-                                 │  └──────────────────┬─────────────────┘          │
-                                 │                     │                            │
-                                 │              [Network State]                     │
-                                 │              /             \                     │
-                                 │          (Online)       (Offline)                │
-                                 │             │               │                    │
-                                 │             │      ┌────────▼──────────┐         │
-                                 │             │      │ SQLite Sync Queue │         │
-                                 │             │      │ (Auto-Replay)     │         │
-                                 │             │      └───────────────────┘         │
-                                 └─────────────┼────────────────────────────────────┘
-                                               │
-                                  HTTPS Direct │ (Signed Token / API Key)
-                                               ▼
-                         ┌───────────────────────────────────────────┐
-                         │      AWS Cloud Backbone (ap-south-1)      │
-                         │                                           │
-                         │   ┌───────────────────────────────────┐   │
-                         │   │      Amazon API Gateway / EC2     │   │
-                         │   │   Nginx Reverse Proxy + Let's Enc │   │
-                         │   └─────────────────┬─────────────────┘   │
-                         │                     │                     │
-                         │   ┌─────────────────▼─────────────────┐   │
-                         │   │  AWS Lambda / Express API Router  │   │
-                         │   └────────┬──────────────────┬───────┘   │
-                         │            │                  │           │
-                         │   ┌────────▼────────┐ ┌───────▼───────┐   │
-                         │   │ AWS Rekognition │ │ Amazon        │   │
-                         │   │ User Vectors    │ │ DynamoDB      │   │
-                         │   │ Collection      │ │ State Locks   │   │
-                         │   └─────────────────┘ └───────────────┘   │
-                         └───────────────────────────────────────────┘
-```
+![Hardware-Tuned Logitech C270 USB Video Capture](images/03_camera_input_logitech.png)
+
+### 3.1 Hardware-Tuned USB Video Capture Pipeline
+Standard USB webcams buffer frames inside operating system device queues. When an edge computer vision process pauses to perform face detection or network dispatch, reading from OpenCV produces stale, delayed frames.
+
+To eliminate camera buffer latency, the system implements:
+* **Logitech C270 & USB Webcam Optimization:** Streams 1080p / 720p resolution at 30 FPS over high-throughput `MJPG` FourCC codec.
+* **Zero Frame Buffer Latency:** Dedicated background grabber thread continuously drains the hardware buffer (`CAP_PROP_BUFFERSIZE = 1`).
+* **OS-Specific Video Backends:** Automatically selects DirectShow (`cv2.CAP_DSHOW`) on Windows and Video4Linux (`cv2.CAP_V4L2`) on Linux.
+* **Intelligent Camera Enumeration:** Discovers and lists connected video devices with auto-selection.
+* **Automatic USB Reconnect Logic:** Exponential backoff reconnects stream seamlessly if the USB cable is unplugged.
 
 ---
 
-## 4. Deep-Dive Mathematical Models & Computer Vision Algorithms
+## 4. Face Detection (YOLO & OpenCV)
 
-### 4.1 Eye Aspect Ratio (EAR) Blink Liveness Detection
-To prevent 2D photo and screen spoofing without requiring active user challenges, the edge pipeline monitors natural involuntary blinking through MediaPipe 3D landmark regression.
+![Multi-Person YOLOv8-Face Detection and Bounding Box Regression](images/04_face_detection_yolo_opencv.png)
 
-For each eye, six specific landmark coordinates ($P_1$ through $P_6$) are tracked:
+### 4.1 Robust Multi-Person Bounding Box Regression
+* **Ultralytics YOLOv8n-face:** Single-stage convolutional neural network optimized for fast, accurate multi-face localization even under varied orientations and partial occlusions.
+* **Adaptive 30% Symmetric Padding:** Clamped to frame bounds to capture entire facial geometry (jawline, ears, forehead).
+* **Quality Crop Gating:** Rejects crops smaller than $120 \times 120\text{ pixels}$ or below 0.80 detection confidence.
+* **Adaptive CLAHE Normalization:** Enhances the L-channel in LAB color space when mean brightness $< 75$, preserving facial geometry in dim environments.
+* **Simultaneous Multi-Person Tracking:** Centroid tracker tracks concurrent faces with 15-second individual cooldowns.
+
+---
+
+## 5. Liveness Check (Real Person vs Photo)
+
+![MediaPipe 3D Mesh and Eye Aspect Ratio Blink Verification](images/05_liveness_check_real_vs_photo.png)
+
+### 5.1 MediaPipe 3D Mesh & Optical Liveness Verification
+To defeat 2D printed photographs, digital tablets, and mobile screen replays without active user challenges, the edge pipeline monitors natural involuntary blinking through MediaPipe 3D landmark regression:
 $$EAR = \frac{||P_2 - P_6|| + ||P_3 - P_5||}{2 \cdot ||P_1 - P_4||}$$
 
-Where:
-* $||P_2 - P_6||$ and $||P_3 - P_5||$ represent vertical eye distances.
-* $||P_1 - P_4||$ represents the horizontal eye width.
-
-* **Open State:** $EAR \ge 0.22$.
-* **Blink In-Progress:** $EAR < 0.22$.
-* **Liveness Criterion:** A user must complete at least 1 verified blink cycle within a 5.0-second tracking window to transition to biometric authorization.
-
-### 4.2 Laplacian Variance for Image Sharpness
-Motion blur caused by student transit can severely distort high-frequency facial features (nasal bridges, eye corners, mouth borders). The edge camera computes the variance of the 2D Laplacian operator across the face crop:
-$$\Delta f = \nabla^2 f = \frac{\partial^2 f}{\partial x^2} + \frac{\partial^2 f}{\partial y^2}$$
-$$\text{Sharpness Score} = \sigma^2(\Delta f) = \frac{1}{N} \sum_{x, y} (L(x, y) - \mu_L)^2$$
-
-* **Threshold:** If $\sigma^2(\Delta f) < 110.0$, the image is classified as blurry and discarded locally with visual guidance (`"Hold still — image blurry"`), preventing degraded images from degrading AWS Rekognition vector search accuracy.
-
-### 4.3 Haversine Geodesic Distance for Campus Boundary Enforcement
-To prevent off-site GPS spoofing, mobile and remote check-ins are verified against campus coordinates ($12.9710^\circ\text{ N}, 79.1591^\circ\text{ E}$):
-$$a = \sin^2\left(\frac{\Delta \phi}{2}\right) + \cos(\phi_1) \cdot \cos(\phi_2) \cdot \sin^2\left(\frac{\Delta \lambda}{2}\right)$$
-$$d = 2 \cdot R \cdot \text{atan2}\left(\sqrt{a}, \sqrt{1 - a}\right)$$
-Where $R = 6,371,000\text{ meters}$, $\phi$ is latitude in radians, and $\lambda$ is longitude in radians. If $d > 2000\text{ meters}$, the check-in is rejected with HTTP 403 `GEO_VIOLATION` and an alert is broadcast to Amazon SNS.
-
-### 4.4 Ambiguity Margin Rule ($\Delta \ge 4.0\%$)
-The core mathematical defense against **friend-swap false positives** is the Ambiguity Margin Rule. When an edge crop is searched against the Rekognition collection, the top candidates sorted by similarity score $s_i$ are evaluated:
-$$\Delta s = s_1 - s_2$$
-$$\text{Decision} = \begin{cases} 
-\text{Accept User}_1, & \text{if } s_1 \ge 95.0\% \text{ and } (\Delta s \ge 4.0\% \text{ or no Candidate}_2) \\
-\text{Reject (AMBIGUOUS\_MATCH)}, & \text{if } s_1 \ge 95.0\% \text{ and } \Delta s < 4.0\% \\
-\text{Reject (UNKNOWN\_FACE)}, & \text{if } s_1 < 95.0\%
-\end{cases}$$
-
-If two students have similar facial geometry and Candidate 1 yields 95.5% while Candidate 2 yields 94.2% ($\Delta s = 1.3\% < 4.0\%$), the system safely rejects the frame as ambiguous rather than falsely identifying the wrong individual.
+* **Eye Aspect Ratio (EAR) Blink Detection:** Requires verified blink cycle ($EAR < 0.22$) within a 5-second window.
+* **Head-Pose Symmetry Validation:** Restricts extreme yaw ($>30^\circ$) and pitch ($>20^\circ$) to ensure frontal alignment.
+* **Laplacian Blur Filtering:** Rejects motion-blurred transit crops ($\sigma^2 < 110.0$) locally before cloud dispatch:
+$$\sigma^2(\Delta f) = \frac{1}{N} \sum_{x, y} (L(x, y) - \mu_L)^2$$
 
 ---
 
-## 5. Database Schemas & Storage Design
+## 6. Student Registration (Multi-Angle Photos)
 
-### 5.1 DynamoDB Table: `SmartAttendanceUsers`
-Stores student master profiles and biometric vectors.
-* **Partition Key (PK):** `user_id` (String, e.g., `"21BCE1042"`)
+![5-Angle Biometric Enrollment Studio](images/06_student_registration_multi_angle.png)
 
-| Attribute | Type | Description |
-|---|---|---|
-| `user_id` | String | Unique Student ID / Roll Number (Primary Key) |
-| `full_name` | String | Student's full registered legal name |
-| `roll_number` | String | Academic registration number |
-| `department` | String | Academic division (e.g., `"Computer Science"`) |
-| `class_id` | String | Cohort / section identifier |
-| `email` | String | Official institutional email address |
-| `phone` | String | Emergency contact phone number |
-| `face_ids` | List (String) | Array of AWS Rekognition `FaceId` UUIDs associated with user |
-| `images` | List (String) | Base64 reference snapshots for browser-side matcher caching |
-| `active` | Boolean | Account status flag (`True` = active, `False` = soft-deleted) |
-| `enrolled_at` | String | ISO-8601 registration timestamp in IST (`YYYY-MM-DDTHH:MM:SS+05:30`) |
-| `updated_at` | String | ISO-8601 last modification timestamp in IST |
-
-### 5.2 DynamoDB Table: `SmartAttendanceLogs`
-Stores daily attendance events with atomic idempotent locks.
-* **Partition Key (PK):** `session_key` (String, e.g., `"CLASS#2026-11-21"`)
-* **Sort Key (SK):** `user_id` (String, e.g., `"21BCE1042"`)
-
-| Attribute | Type | Description |
-|---|---|---|
-| `session_key` | String | Daily partition identifier (`CLASS#YYYY-MM-DD` in IST) |
-| `user_id` | String | Student identifier (Sort Key) |
-| `full_name` | String | Student name snapshot at time of scan |
-| `roll_number` | String | Academic roll number snapshot |
-| `department` | String | Department snapshot |
-| `check_in_time` | String | Formatted local time string (e.g., `"10:30 AM"`) |
-| `check_in_date` | String | Local IST date string (`"YYYY-MM-DD"`) |
-| `status` | String | Attendance status (`"PRESENT"` or `"LATE"`) |
-| `confidence_score`| Number | Rekognition biometric similarity percentage (e.g., `97.8`) |
-| `device_id` | String | Kiosk terminal identifier (e.g., `"kiosk-logitech-01"`) |
-| `snapshot_s3_key`| String | S3 URI of the live audit capture frame |
-| `created_at` | String | ISO-8601 exact capture timestamp in IST |
+### 6.1 Strict Biometric Enrollment & Vector Purity
+* **5-Angle Enrollment Studio:** Captures Frontal, Slight Left, Slight Right, Neutral, and Tilted reference angles.
+* **Single-Face Guard:** Calls `DetectFaces` prior to indexing; rejects image if face count $\ne 1$ (prevents friend contamination).
+* **Cross-User Collision Detection:** `SearchUsersByImage` checks if the uploaded face is already registered under another student ID (HTTP 409 Conflict).
+* **High Quality Filtering:** `IndexFaces` applies `QualityFilter="HIGH"` to eliminate low-resolution or blurry training samples.
+* **S3 Archival Storage:** Original high-resolution angles securely stored in AWS S3 under `enrolled/{user_id}/angle_{i}.jpg` for auditability.
 
 ---
 
-## 6. REST API Contract & Endpoint Specifications
+## 7. Cloud Face Matching (AWS Rekognition)
 
-All endpoints communicate over HTTPS with `Content-Type: application/json` and require authentication via the `x-api-key` header.
+![Amazon Rekognition User Vector Search and Similarity Evaluation](images/07_cloud_face_matching_rekognition.png)
 
-| Method | Endpoint | Description | Status Codes |
-|---|---|---|---|
-| `POST` | `/enroll` | Enroll new student with 3–5 multi-angle face photos | `201` Created<br/>`400` Bad Request (0 or >1 face)<br/>`409` Conflict (Collision)<br/>`500` Error |
-| `POST` | `/check-in` | Submit camera face crop for biometric identification | `200` OK (Present/Already Marked)<br/>`403` Forbidden (Geo-violation)<br/>`404` Not Found (Unknown Face)<br/>`422` Ambiguous / No Face |
-| `GET` | `/users` | Retrieve all enrolled students (with pagination) | `200` OK<br/>`500` Error |
-| `GET` | `/attendance` | Query daily attendance logs with full left-join roster | `200` OK<br/>`500` Error |
-| `DELETE`| `/attendance` | Delete a single student's daily check-in (revert to Absent)| `200` OK<br/>`400` Missing user_id<br/>`500` Error |
-| `PUT` | `/users/{id}` | Update student profile metadata | `200` OK<br/>`400` Bad Request<br/>`500` Error |
-| `DELETE`| `/users/{id}` | Soft-delete a student (`active = False`) | `200` OK<br/>`500` Error |
-| `POST` | `/users/{id}/faces` | Upload additional face photos to existing profile | `200` OK<br/>`400` Bad Request<br/>`409` Collision |
-| `DELETE`| `/users/{id}/faces/{fid}`| Remove degraded photo (safeguard: min 1 remaining)| `200` OK<br/>`400` Last photo blocked |
+### 7.1 Deep User Vector Search & Ambiguity Defense
+* **Amazon Rekognition User Vectors:** High-dimensional vector embeddings stored in `smart-attendance-collection` (Region: `ap-south-1` Mumbai).
+* **Strict Similarity Floor:** Configured threshold of **95.0%** (hard minimum of 93.0%) guarantees accurate identification.
+* **Ambiguity Margin Rule:** Evaluates top candidates; requires:
+$$\Delta s = s_1 - s_2 \ge 4.0\%$$
+* **Zero Friend-Swap False Positives:** Rejects close runner-up matches with HTTP 422 `AMBIGUOUS_MATCH`.
+* **Sub-Second Verification:** Complete cloud vector search and DynamoDB state lock executes in $< 350\text{ ms}$.
 
 ---
 
-## 7. Bespoke Editorial UI/UX Design System
+## 8. Database & Storage (DynamoDB, S3 & SQLite)
 
-The administrative interface deviates from generic AI templates by implementing an architectural, editorial aesthetic rooted in physical craftsmanship:
+![DynamoDB Tables and Amazon S3 Storage Architecture](images/08_database_storage_dynamodb_s3.png)
 
-### 7.1 Design Tokens & Color Palette
-* **Canvas (`#F5F4F0`):** Warm, tactile ceramic background evoking archival cotton cardstock.
-* **Surface (`#FFFFFF`):** Crisp architectural white sheets with 1px hairline borders (`#E5E5E0`).
-* **Typography Carbon (`#141413`):** High-contrast deep carbon black for headlines and numerical displays.
-* **Accent Pine (`#166534`):** Subdued forest pine green for active navigation states, primary buttons, and `PRESENT` verification pills.
-* **Muted Ochre (`#B58E43`):** Warm amber used exclusively for `LATE` status indicators.
-* **Muted Brick (`#864446`):** Elegant dusty terracotta used for `ABSENT` status badges and unknown face warnings.
-
-### 7.2 Typography Architecture
-* **Headlines & KPI Numerals:** `Newsreader` (Editorial Serif, 400/500/600 weight) with optical sizing. Gives the application the distinguished tone of a Swiss architectural monograph or university ledger.
-* **Tabular Data, IDs & Clocks:** `Inter` (sans-serif) configured with `font-feature-settings: 'tnum', 'zero'`. Guarantees perfectly aligned monospace tabular digits for student roll numbers, timestamps, and confidence ratings across dynamic real-time table updates.
+### 8.1 Resilient Hybrid Cloud & Offline Persistence Architecture
+* **`SmartAttendanceUsers` Table:** Master student directory, roll numbers, departments, active flags, and Rekognition `FaceId`s.
+* **`SmartAttendanceLogs` Table:** Daily partitions (`CLASS#YYYY-MM-DD` in IST) with sort key `user_id`.
+* **Idempotent Conditional Lock:** `attribute_not_exists(user_id)` prevents duplicate check-in overwrite.
+* **Amazon S3 Audit Storage:** Automatically archives timestamped live capture frames under `audit/YYYY-MM-DD/`.
+* **SQLite WAL Offline Queue:** Edge kiosks buffer check-in events during WAN outages and auto-sync on reconnect.
 
 ---
 
-## 8. Verification Matrix & Failure Mitigation
+## 9. Live Attendance Dashboard
 
-| Failure Scenario | Root Cause | Engineering Mitigation | Verification Test |
-|---|---|---|---|
-| **Friend-Swap False Positive** | Two friends stand together; Candidate 1 similarity is marginally higher than Candidate 2. | Ambiguity Margin Rule enforces $(s_1 - s_2) \ge 4.0\%$. Close matches rejected with HTTP 422 `AMBIGUOUS_MATCH`. | `test_checkin_ambiguous_match_rejection` |
-| **Identity Contamination** | Friend in background during multi-angle enrollment is indexed into student vector. | Pre-indexing `DetectFaces` count validation: rejects images where face count $\ne 1$. | `test_enroll_rejects_multiple_faces` |
-| **Identity Hijacking / Duplication** | Student attempts to register a face already assigned to another student ID. | Pre-indexing `SearchUsersByImage` collision detection: blocks duplicate face registrations with HTTP 409. | `test_enroll_rejects_cross_user_collision` |
-| **Missing Students on Dashboard** | DynamoDB table scan exceeds 1MB, truncating un-scanned students from page 1. | Exhaustive pagination loop over `LastEvaluatedKey` in `GET /users` and `GET /attendance`. | `test_get_users_pagination` |
-| **Un-scanned Students Disappear** | Querying attendance logs returns only students who checked in today. | Full outer left-join merges active users; absent students injected with `status: "ABSENT"`. | `test_get_attendance_absent_left_join_and_pagination` |
-| **Corrupt Crop / 500 Crash** | Blank, occluded, or non-face crop dispatched to Rekognition throws `InvalidParameterException`. | Explicit exception handling returns HTTP 422 `NO_FACE_DETECTED` with actionable UI feedback. | `test_checkin_invalid_parameter_returns_422` |
-| **USB Camera Buffer Stutter** | Blocking HTTP requests freeze OpenCV capture, reading stale cached frames. | Dedicated background grabber thread with `CAP_PROP_BUFFERSIZE = 1` drains buffer continuously. | `LogitechWebcam._capture_worker` |
-| **Campus WAN Outage** | Internet connection drops at the classroom entrance. | SQLite transactional offline queue buffers records and auto-syncs when WAN restores. | `test_offline_queue_enqueue_and_sync` |
-| **UTC Midnight Date Rollover** | UTC midnight occurs at 05:30 AM IST, misfiling early morning logs into previous day. | Strict `Asia/Kolkata` (UTC+05:30) date formatting for session keys (`CLASS#YYYY-MM-DD`). | `test_checkin_ist_midnight_boundary_date` |
+![Live Attendance Dashboard Overview with Donut KPI and Student Roster](images/09_live_attendance_dashboard.jpg)
+
+### 9.1 Editorial Architectural Interface & 100% Roster Tracking
+* **100% Enrolled Student Visibility:** Exhaustive `LastEvaluatedKey` pagination loops return all registered students.
+* **Full Left-Join Roster Engine:** Un-scanned students automatically appear as `ABSENT`; flip dynamically to `PRESENT` upon scan.
+* **Bespoke Ceramic Aesthetic:** Designed with Newsreader serif headlines and tabular-nums Inter alignment.
+* **Real-Time Ticking IST Clock:** Synchronized with `Asia/Kolkata` (UTC+05:30) to eliminate midnight boundary bugs.
+* **Integrated Admin Controls:** Slide-over profile editor, delete check-in capability, and 1-click verified CSV export.
+
+---
+
+## 10. Hosting & Automation (EC2, Nginx & Jenkins)
+
+![Jenkins Automated CI/CD Pipeline and GitHub Webhook Integration](images/10_hosting_automation_ec2_jenkins.png)
+
+### 10.1 Production Infrastructure & Automated CI/CD Pipeline
+* **AWS EC2 Cloud Host:** Ubuntu 24.04 LTS instance running in `ap-south-1` (Mumbai).
+* **Nginx Reverse Proxy:** Production HTTPS termination with automated Let's Encrypt SSL certificate renewal (`https://13-126-255-119.sslip.io`).
+* **PM2 Process Manager:** Zero-downtime application process management with automatic system restart.
+* **GitHub Webhook Integration:** Push events to `main` branch trigger Jenkins automated CI/CD pipeline.
+* **Automated 39-Test Suite:** Jenkins validates Python backend and edge kiosk before compiling Vite bundle and reloading.

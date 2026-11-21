@@ -48,6 +48,8 @@ ENV/
 *.jpg
 *.jpeg
 *.png
+!docs/images/**
+!docs/screenshots/**
 !docs/screenshots/*.png
 *.csv
 *.log
