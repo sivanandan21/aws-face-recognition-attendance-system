@@ -491,25 +491,26 @@ export default function LiveKiosk({ onScanSuccess }) {
                           {isLate ? 'Late' : 'Present'}
                         </span>
 
-                        {/* Remove Option for Present Students in Live Scan */}
+                        {/* Prominent Delete Option for Present Students in Live Scan */}
                         <button
                           type="button"
                           onClick={() => handleRemoveVerification(item.user_id, item.full_name)}
                           disabled={isRemoving}
-                          title={`Remove ${item.full_name || item.user_id} from present records`}
-                          aria-label={`Remove ${item.full_name || item.user_id}`}
-                          className="h-6 w-6 sm:h-7 sm:w-7 flex items-center justify-center rounded-full text-[#8A867E] hover:text-[#864446] hover:bg-[#864446]/10 active:scale-95 transition-all focus:outline-none"
+                          title={`Delete ${item.full_name || item.user_id}'s present check-in`}
+                          aria-label={`Delete ${item.full_name || item.user_id}`}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold text-[#864446] hover:text-white bg-[#864446]/10 hover:bg-[#864446] border border-[#864446]/30 active:scale-95 transition-all focus:outline-none"
                         >
                           {isRemoving ? (
-                            <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                            <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                             </svg>
                           ) : (
-                            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                             </svg>
                           )}
+                          <span>Delete</span>
                         </button>
                       </div>
                     </div>

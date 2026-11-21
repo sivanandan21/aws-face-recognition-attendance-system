@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { fetchAttendance, fetchUsers, updateUser, addUserFaces, removeUserFace } from '../services/api'
+import { fetchAttendance, fetchUsers, updateUser, addUserFaces, removeUserFace, removeAttendanceRecord } from '../services/api'
 
 export default function Overview({ onNavigate }) {
   const [records, setRecords] = useState([])
@@ -47,12 +47,71 @@ export default function Overview({ onNavigate }) {
         fetchAttendance(todayStr),
         fetchUsers()
       ])
-      setRecords(attData.records || [])
-      setUsers(usersData || [])
+      const enrolled = usersData || []
+      const rawRecords = attData?.records || []
+
+      // Create lookup of active check-ins by user_id
+      const recordsByUserId = new Map()
+      rawRecords.forEach(r => {
+        if (r.user_id && (r.status === 'PRESENT' || r.status === 'LATE')) {
+          recordsByUserId.set(r.user_id, r)
+        }
+      })
+
+      // Combine every enrolled student:
+      // If scanned present today -> PRESENT/LATE
+      // If not yet scanned today -> ABSENT
+      const mergedRoster = enrolled.map(u => {
+        const checkin = recordsByUserId.get(u.user_id)
+        if (checkin) {
+          return {
+            ...u,
+            ...checkin,
+            full_name: u.full_name || checkin.full_name,
+            department: u.department || checkin.department,
+            roll_number: u.roll_number || checkin.roll_number || ''
+          }
+        }
+        return {
+          user_id: u.user_id,
+          full_name: u.full_name || u.user_id,
+          roll_number: u.roll_number || '',
+          department: u.department || 'General',
+          class_id: u.class_id || '',
+          check_in_time: null,
+          check_in_date: todayStr,
+          status: 'ABSENT',
+          confidence_score: null,
+          device_id: null
+        }
+      })
+
+      // Also include any scanned record whose user might not be in the enrolled list yet
+      rawRecords.forEach(r => {
+        if (r.user_id && !enrolled.some(u => u.user_id === r.user_id)) {
+          mergedRoster.push(r)
+        }
+      })
+
+      setRecords(mergedRoster)
+      setUsers(enrolled)
     } catch (err) {
       console.warn('Error fetching live attendance:', err)
     } finally {
       if (showSpinner) setLoading(false)
+    }
+  }
+
+  async function handleRevokeAttendance(userId, userName) {
+    if (!window.confirm(`Delete today's check-in for ${userName || userId}? Their status will revert to Absent.`)) {
+      return
+    }
+    try {
+      await removeAttendanceRecord(userId, todayStr)
+      showToast(`✓ Removed check-in for ${userName || userId}. Status reverted to Absent.`)
+      await loadData(false)
+    } catch (err) {
+      showToast(`Failed to remove attendance: ${err.message}`, 'error')
     }
   }
 
@@ -712,12 +771,23 @@ export default function Overview({ onNavigate }) {
                       </td>
 
                       <td className="py-2.5 text-right pr-2">
-                        <button
-                          onClick={() => openEditDrawer(r)}
-                          className="px-2.5 py-1 bg-white hover:bg-[#FAF9F6] border border-[#DCD9D0] text-[#141413] rounded-lg text-xs font-medium transition-colors shadow-2xs opacity-85 group-hover:opacity-100"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {!isAbsent && (
+                            <button
+                              onClick={() => handleRevokeAttendance(r.user_id, r.full_name)}
+                              title="Delete today's check-in (revert status to Absent)"
+                              className="px-2 py-1 text-xs font-medium text-[#864446] hover:text-white bg-[#864446]/10 hover:bg-[#864446] border border-[#864446]/30 rounded-lg transition-all active:scale-95"
+                            >
+                              Delete
+                            </button>
+                          )}
+                          <button
+                            onClick={() => openEditDrawer(r)}
+                            className="px-2.5 py-1 bg-white hover:bg-[#FAF9F6] border border-[#DCD9D0] text-[#141413] rounded-lg text-xs font-medium transition-colors shadow-2xs opacity-85 group-hover:opacity-100"
+                          >
+                            Edit
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
