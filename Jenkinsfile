@@ -53,13 +53,9 @@ pipeline {
             steps {
                 sh '''
                     echo "=== Deploying to Live Production & Restarting PM2 ==="
-                    sudo -u ubuntu bash -c '
-                        cd /home/ubuntu/aws-face-recognition-attendance-system
-                        git fetch origin main
-                        git reset --hard origin/main
-                        cd dashboard && npm install
-                        pm2 restart attendance-dashboard || pm2 start npm --name "attendance-dashboard" -- run dev -- --host 0.0.0.0 --port 3000
-                    ' || true
+                    chmod +x scripts/deploy_production.sh || true
+                    sudo -u ubuntu bash /home/ubuntu/aws-face-recognition-attendance-system/scripts/deploy_production.sh || \
+                    sudo -u ubuntu bash -c 'cd /home/ubuntu/aws-face-recognition-attendance-system && git fetch origin main && git reset --hard origin/main && cd dashboard && npm install && pm2 restart attendance-dashboard' || true
                 '''
             }
         }
