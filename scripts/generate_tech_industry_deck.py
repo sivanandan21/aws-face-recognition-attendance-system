@@ -6,7 +6,9 @@ authentic tool recognition + clean 3D isometric models, speaker notes on every s
 """
 
 import os
+import sys
 import shutil
+import subprocess
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -656,7 +658,7 @@ slides_config = [
         "slide_num": 2,
         "heading": "Our Live Example: Smart Attendance",
         "subheading": "One Real System Powered by All 7 Industry Layers",
-        "visual_path": os.path.join(IMAGES_DIR, "03_camera_input_logitech.png"),
+        "visual_path": os.path.join(ASSETS_DIR, "slide2_real_attendance_demo.png"),
         "notes": (
             "To keep this practical and fun, we brought a working enterprise system into the classroom: "
             "our Smart Face Recognition Attendance System.\n"
@@ -704,7 +706,7 @@ slides_config = [
         "slide_num": 5,
         "heading": "Inside the Linux Terminal",
         "subheading": "Controlling a Computer Directly with Simple Commands",
-        "visual_path": f_slide5,
+        "visual_path": os.path.join(ASSETS_DIR, "slide5_real_terminal.png"),
         "notes": (
             "In movies, software engineers always type rapidly on a dark terminal screen without touching a mouse. "
             "That's the Linux Terminal (the Command Line Interface)!\n\n"
@@ -721,7 +723,7 @@ slides_config = [
         "slide_num": 6,
         "heading": "Live Demo: Linux Powering Our Server",
         "subheading": "Our Attendance App Running Live on Ubuntu",
-        "visual_path": os.path.join(IMAGES_DIR, "10_hosting_automation_ec2_jenkins.png"),
+        "visual_path": os.path.join(ASSETS_DIR, "slide6_real_ec2_ubuntu.png"),
         "notes": (
             "Take a look at this real terminal screen. This is our live production cloud server in Mumbai.\n"
             "It is running Ubuntu Linux 24.04 LTS. Notice that little green indicator that says 'online'? "
@@ -779,7 +781,7 @@ slides_config = [
         "slide_num": 10,
         "heading": "Live Demo: Code Meets Hardware",
         "subheading": "Python Turning On Our External Logitech Webcam",
-        "visual_path": os.path.join(IMAGES_DIR, "03_camera_input_logitech.png"),
+        "visual_path": os.path.join(ASSETS_DIR, "slide10_code_meets_hardware.png"),
         "notes": (
             "[Live Demo Step]: Sir runs the Python camera script directly on the presenter laptop.\n"
             "Watch the projector screen. As soon as the script executes, the physical green LED on the Logitech C270 "
@@ -883,7 +885,7 @@ slides_config = [
         "slide_num": 17,
         "heading": "5. Jenkins (CI/CD)",
         "subheading": "The Automation Butler That Tests and Ships Code",
-        "visual_path": f_slide17,
+        "visual_path": os.path.join(ASSETS_DIR, "slide17_jenkins_automation.png"),
         "notes": (
             "Stage 5: Jenkins and CI/CD (Continuous Integration & Continuous Delivery).\n\n"
             "In movies and beginner projects, people copy files to a server over FTP or drag and drop files. "
@@ -973,7 +975,7 @@ slides_config = [
         "slide_num": 23,
         "heading": "The Complete Industry Journey",
         "subheading": "Linux → Python → AI/ML → Docker → Jenkins → Cloud → Network",
-        "visual_path": f_slide23,
+        "visual_path": os.path.join(ASSETS_DIR, "slide23_complete_journey_with_kiosk.png"),
         "notes": (
             "And that, students, is the complete journey of how the modern tech industry builds, automates, and runs software!\n\n"
             "Look at the full chain:\n"
@@ -997,6 +999,8 @@ slides_config = [
 # ==============================================================================
 
 def assemble_presentation():
+    # Ensure real project slide assets are freshly built
+    subprocess.run([sys.executable, os.path.join(BASE_DIR, "scripts", "build_all_real_deck_assets.py")], check=True)
     print(f"Creating 16:9 widescreen presentation with {len(slides_config)} slides...")
     prs = pptx.Presentation()
     prs.slide_width = Inches(13.333)

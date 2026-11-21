@@ -51,7 +51,7 @@ slide_data = [
             "Intelligent Camera Enumeration: Discovers and lists connected video devices with auto-selection.",
             "Automatic USB Reconnect Logic: Exponential backoff reconnects stream seamlessly if cable is unplugged."
         ],
-        "img": "03_camera_input_logitech.png"
+        "img": "real_logitech_c270_webcam.jpg"
     },
     {
         "title": "Face Detection (YOLO & OpenCV)",
@@ -123,7 +123,7 @@ slide_data = [
             "Real-Time Ticking IST Clock: Synchronized with Asia/Kolkata (UTC+05:30) to eliminate midnight boundary bugs.",
             "Integrated Admin Controls: Slide-over profile editor, delete check-in capability, and 1-click verified CSV export."
         ],
-        "img": "09_live_attendance_dashboard.jpg"
+        "img": "real_live_kiosk_c270.png"
     },
     {
         "title": "Hosting & Automation (EC2, Nginx & Jenkins)",
@@ -135,7 +135,7 @@ slide_data = [
             "GitHub Webhook Integration: Push events to main branch trigger Jenkins automated CI/CD pipeline.",
             "Automated 39-Test Suite: Jenkins validates Python backend and edge kiosk before compiling Vite bundle and reloading."
         ],
-        "img": "10_hosting_automation_ec2_jenkins.png"
+        "img": "real_ubuntu_mobaxterm_ec2.png"
     }
 ]
 
@@ -181,6 +181,11 @@ for idx, data in enumerate(slide_data):
         bp.level = 0
     
     # 3. Add Image on the Right
+    for s in list(slide.shapes):
+        if s.shape_type == pptx.enum.shapes.MSO_SHAPE_TYPE.PICTURE:
+            sp = s._element
+            sp.getparent().remove(sp)
+
     img_path = os.path.join(img_dir, data["img"])
     if os.path.exists(img_path):
         with Image.open(img_path) as im:
