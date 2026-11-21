@@ -85,6 +85,17 @@ class EdgeKioskApp:
 
         # 3. Process each detected face
         for face in faces:
+            # Reject low-confidence or corrupt crops immediately
+            if face.confidence < 0.80:
+                continue
+            if (
+                face.crop is None
+                or face.crop.size == 0
+                or face.crop.shape[0] < config.min_face_size
+                or face.crop.shape[1] < config.min_face_size
+            ):
+                continue
+
             fx, fy, fw, fh = face.bbox
             px, py, pw, ph = face.padded_bbox
 
@@ -206,6 +217,18 @@ class EdgeKioskApp:
                                                     self.last_verified_banner = f"{res_status}: {name} • {time_str} ({conf}%)"
                                                     self.last_verified_time = time.time()
                                                     self.last_verified_color = (0, 255, 0)
+                                                elif res_status == "AMBIGUOUS_MATCH":
+                                                    color = (0, 165, 255)
+                                                    status_text = "Ambiguous - Look directly at camera"
+                                                    self.last_verified_banner = "Biometric ambiguity: Please look directly into the camera"
+                                                    self.last_verified_time = time.time()
+                                                    self.last_verified_color = (0, 165, 255)
+                                                elif res_status == "NO_FACE_DETECTED":
+                                                    color = (0, 165, 255)
+                                                    status_text = "Align face in frame"
+                                                    self.last_verified_banner = "No clear face: Please align within camera frame"
+                                                    self.last_verified_time = time.time()
+                                                    self.last_verified_color = (0, 165, 255)
                                                 elif res_status == "OFFLINE_QUEUED":
                                                     color = (255, 255, 0)
                                                     status_text = "Offline Buffered"

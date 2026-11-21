@@ -78,27 +78,30 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             return json_response(500, {"error": "Failed to remove attendance record", "details": str(e)})
 
     try:
-        # 1. Query attendance records for the date
+        # 1. Query attendance records for the date with LastEvaluatedKey pagination
+        query_kwargs = {
+            "KeyConditionExpression": Key("session_key").eq(session_key)
+        }
         if department:
-            att_response = att_table.query(
-                KeyConditionExpression=Key("session_key").eq(session_key),
-                FilterExpression=Attr("department").eq(department),
-            )
-        else:
-            att_response = att_table.query(
-                KeyConditionExpression=Key("session_key").eq(session_key)
-            )
+            query_kwargs["FilterExpression"] = Attr("department").eq(department)
 
-        records = att_response.get("Items", [])
+        records = []
+        while True:
+            att_response = att_table.query(**query_kwargs)
+            records.extend(att_response.get("Items", []))
+            if "LastEvaluatedKey" not in att_response:
+                break
+            query_kwargs["ExclusiveStartKey"] = att_response["LastEvaluatedKey"]
+
         present_user_ids = {r["user_id"] for r in records}
 
-        # 2. Scan all active users
+        # 2. Scan all enrolled users with pagination loop (include active != False so legacy records appear)
         scan_kwargs = {
-            "FilterExpression": Attr("active").eq(True),
+            "FilterExpression": Attr("active").ne(False),
         }
         if department:
             scan_kwargs["FilterExpression"] = (
-                Attr("active").eq(True) & Attr("department").eq(department)
+                Attr("active").ne(False) & Attr("department").eq(department)
             )
 
         all_users = []
@@ -126,9 +129,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             if user["user_id"] not in present_user_ids:
                 records.append({
                     "user_id": user["user_id"],
-                    "full_name": user.get("full_name", ""),
+                    "full_name": user.get("full_name", user["user_id"]),
                     "roll_number": user.get("roll_number", ""),
-                    "department": user.get("department", ""),
+                    "department": user.get("department", "General"),
                     "check_in_time": None,
                     "status": "ABSENT",
                     "confidence_score": None,

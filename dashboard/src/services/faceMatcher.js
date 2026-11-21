@@ -11,8 +11,40 @@ let modelsLoading = false
 let modelsLoadFailed = false
 let modelsReadyPromise = null
 
+// Strict Euclidean distance threshold:
+// 0.42 strictly differentiates distinct individuals and eliminates cross-matching between friends/classmates
+export const STRICT_DISTANCE_THRESHOLD = 0.42
+
 // Memory cache for enrolled users' pre-computed descriptors
 const descriptorCache = new Map() // user_id -> LabeledFaceDescriptors
+
+function loadCachedDescriptors() {
+  try {
+    const raw = localStorage.getItem('smart_attendance_face_descriptors')
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    Object.entries(parsed).forEach(([uid, arr]) => {
+      if (Array.isArray(arr) && arr.length > 0 && !descriptorCache.has(uid)) {
+        const floatArrays = arr.map(a => new Float32Array(a))
+        descriptorCache.set(uid, new faceapi.LabeledFaceDescriptors(uid, floatArrays))
+      }
+    })
+  } catch (e) {
+    console.warn('Failed to load cached descriptors:', e)
+  }
+}
+
+function saveCachedDescriptors() {
+  try {
+    const obj = {}
+    descriptorCache.forEach((val, uid) => {
+      obj[uid] = val.descriptors.map(d => Array.from(d))
+    })
+    localStorage.setItem('smart_attendance_face_descriptors', JSON.stringify(obj))
+  } catch (e) {
+    // ignore quota issues
+  }
+}
 
 /**
  * Load face-api.js models from /models.
@@ -103,11 +135,13 @@ export async function extractFaceDescriptor(imageSource) {
 /**
  * Pre-computes and caches LabeledFaceDescriptors for enrolled users.
  */
-export async function buildFaceMatcher(enrolledUsers, distanceThreshold = 0.55) {
+export async function buildFaceMatcher(enrolledUsers, distanceThreshold = STRICT_DISTANCE_THRESHOLD) {
   await loadModels()
   if (!modelsLoaded || modelsLoadFailed) return null
 
+  loadCachedDescriptors()
   const labeledDescriptors = []
+  let newDescriptorsAdded = false
 
   for (const user of enrolledUsers || []) {
     if (!user.images || user.images.length === 0) continue
@@ -130,7 +164,12 @@ export async function buildFaceMatcher(enrolledUsers, distanceThreshold = 0.55) 
       const labeled = new faceapi.LabeledFaceDescriptors(user.user_id, descriptors)
       descriptorCache.set(user.user_id, labeled)
       labeledDescriptors.push(labeled)
+      newDescriptorsAdded = true
     }
+  }
+
+  if (newDescriptorsAdded) {
+    saveCachedDescriptors()
   }
 
   if (labeledDescriptors.length === 0) return null
@@ -144,10 +183,10 @@ export async function buildFaceMatcher(enrolledUsers, distanceThreshold = 0.55) 
  *
  * @param {HTMLVideoElement|HTMLCanvasElement|HTMLImageElement} videoElement
  * @param {Array} enrolledUsers
- * @param {number} threshold (Euclidean distance threshold; standard is 0.55)
+ * @param {number} threshold (Euclidean distance threshold; strict 0.44 prevents false positives)
  * @returns {Promise<Array>} Array of detected face match results
  */
-export async function detectAndMatchAllFaces(videoElement, enrolledUsers, threshold = 0.55) {
+export async function detectAndMatchAllFaces(videoElement, enrolledUsers, threshold = STRICT_DISTANCE_THRESHOLD) {
   if (!videoElement || videoElement.videoWidth === 0) return []
 
   await loadModels()

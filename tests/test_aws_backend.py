@@ -431,3 +431,155 @@ def test_remove_attendance_record_missing_user_id():
         body = json.loads(resp["body"])
         assert "Missing user_id parameter" in body["error"]
 
+
+# ==========================================
+# 5. PEAK PERFORMANCE & ACCURACY GUARDRAIL TESTS
+# ==========================================
+
+def test_enroll_rejects_multiple_faces():
+    """Verify enrollment rejects images containing multiple faces to prevent vector pollution."""
+    fake_img = base64.b64encode(b"two-people").decode("utf-8")
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "user_id": "STU102",
+            "full_name": "Friend Contaminated",
+            "images": [fake_img],
+        }),
+    }
+    with patch.object(enroll.rekognition, "create_user"), \
+         patch.object(enroll.rekognition, "detect_faces") as mock_det:
+        mock_det.return_value = {"FaceDetails": [{}, {}]}  # 2 faces detected
+        resp = enroll.lambda_handler(event, None)
+        assert resp["statusCode"] == 400
+        body = json.loads(resp["body"])
+        assert body["error"] == "MultipleFacesDetected"
+
+
+def test_enroll_rejects_cross_user_collision():
+    """Verify enrollment blocks registering a face already associated with another student."""
+    fake_img = base64.b64encode(b"friend-face").decode("utf-8")
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "user_id": "STU102",
+            "full_name": "Friend Impersonator",
+            "images": [fake_img],
+        }),
+    }
+    with patch.object(enroll.rekognition, "create_user"), \
+         patch.object(enroll.rekognition, "detect_faces") as mock_det, \
+         patch.object(enroll.rekognition, "search_users_by_image") as mock_search:
+        mock_det.return_value = {"FaceDetails": [{}]}  # 1 face
+        mock_search.return_value = {
+            "UserMatches": [{"Similarity": 96.5, "User": {"UserId": "STU101"}}]
+        }
+        resp = enroll.lambda_handler(event, None)
+        assert resp["statusCode"] == 409
+        body = json.loads(resp["body"])
+        assert body["error"] == "FaceCollisionDetected"
+        assert body["colliding_user_id"] == "STU101"
+
+
+def test_checkin_ambiguous_match_rejection():
+    """Verify check-in rejects ambiguous frames when 2 candidates are within 4% similarity."""
+    fake_img = base64.b64encode(b"dummy").decode("utf-8")
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "image_base64": fake_img,
+            "device_id": "kiosk-01",
+            "latitude": 12.9710,
+            "longitude": 79.1591,
+        }),
+    }
+    with patch.object(check_in.rekognition, "search_users_by_image") as mock_search:
+        # Candidate 1: 96.2%, Candidate 2: 94.8% -> Gap = 1.4% (< 4.0% margin)
+        mock_search.return_value = {
+            "UserMatches": [
+                {"Similarity": 96.2, "User": {"UserId": "STU101"}},
+                {"Similarity": 94.8, "User": {"UserId": "STU102"}},
+            ]
+        }
+        resp = check_in.lambda_handler(event, None)
+        assert resp["statusCode"] == 422
+        body = json.loads(resp["body"])
+        assert body["status"] == "AMBIGUOUS_MATCH"
+        assert body["gap"] == 1.4
+
+
+def test_checkin_invalid_parameter_returns_422():
+    """Verify corrupted or empty crops raise 422 with NO_FACE_DETECTED instead of 500."""
+    fake_img = base64.b64encode(b"bad-crop").decode("utf-8")
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "image_base64": fake_img,
+            "device_id": "kiosk-01",
+            "latitude": 12.9710,
+            "longitude": 79.1591,
+        }),
+    }
+    with patch.object(check_in.rekognition, "search_users_by_image") as mock_search:
+        err = ClientError(
+            {"Error": {"Code": "InvalidParameterException", "Message": "No face in frame"}},
+            "SearchUsersByImage",
+        )
+        mock_search.side_effect = err
+        resp = check_in.lambda_handler(event, None)
+        assert resp["statusCode"] == 422
+        body = json.loads(resp["body"])
+        assert body["status"] == "NO_FACE_DETECTED"
+
+
+def test_get_users_pagination():
+    """Verify get_users loops over LastEvaluatedKey to return all enrolled users."""
+    mock_table = MagicMock()
+    mock_table.scan.side_effect = [
+        {"Items": [{"user_id": "STU1"}], "LastEvaluatedKey": {"user_id": "STU1"}},
+        {"Items": [{"user_id": "STU2"}]},
+    ]
+    with patch.object(get_users.dynamodb, "Table", return_value=mock_table):
+        resp = get_users.lambda_handler({}, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert len(body) == 2
+        assert body[0]["user_id"] == "STU1"
+        assert body[1]["user_id"] == "STU2"
+
+
+def test_get_attendance_absent_left_join_and_pagination():
+    """Verify students without a check-in record for the date appear with ABSENT status."""
+    event = {"queryStringParameters": {"date": "2026-11-21"}}
+    mock_att = MagicMock()
+    mock_users = MagicMock()
+
+    # Attendance logs: STU101 is present
+    mock_att.query.return_value = {
+        "Items": [{"user_id": "STU101", "status": "PRESENT", "check_in_time": "09:00 AM"}]
+    }
+    # Enrolled users: STU101 and STU102
+    mock_users.scan.return_value = {
+        "Items": [
+            {"user_id": "STU101", "full_name": "Rohan Sharma", "department": "CSE", "active": True},
+            {"user_id": "STU102", "full_name": "Vigu Raman", "department": "ECE", "active": True},
+        ]
+    }
+
+    def table_router(name):
+        if "Users" in name:
+            return mock_users
+        return mock_att
+
+    with patch.object(get_attendance.dynamodb, "Table", side_effect=table_router):
+        resp = get_attendance.lambda_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["count"] == 2
+        records = body["records"]
+        stu101 = next(r for r in records if r["user_id"] == "STU101")
+        stu102 = next(r for r in records if r["user_id"] == "STU102")
+        assert stu101["status"] == "PRESENT"
+        assert stu102["status"] == "ABSENT"
+        assert stu102["check_in_time"] is None
+

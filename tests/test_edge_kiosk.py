@@ -411,3 +411,15 @@ def test_score_face_crop():
     score2 = score_face_crop(sharpness=60.0, confidence=0.90)
     assert score1 > score2
     assert score1 == (120.0 / 100.0) * 0.90
+
+
+def test_padding_percent_30():
+    """Verify 30% padding calculation expands bounding boxes symmetrically."""
+    detector = YOLOFaceDetector(conf_threshold=0.80, padding_percent=0.30)
+    # (100, 100, 60, 60) on 640x480 frame
+    # 30% of 60 = 18
+    px, py, pw, ph = detector.apply_padding(100, 100, 60, 60, 640, 480)
+    assert px == 82
+    assert py == 82
+    assert pw == 96
+    assert ph == 96

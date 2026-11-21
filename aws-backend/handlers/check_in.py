@@ -8,6 +8,7 @@ stores audit snapshot in S3, and sends SNS alert on unknown face / violation.
 
 import base64
 import json
+import logging
 import math
 import os
 import uuid
@@ -16,6 +17,8 @@ from typing import Any, Dict, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
+
+logger = logging.getLogger("check_in")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -126,15 +129,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
 
     # 2. Rekognition User Vector Search (SearchUsersByImage)
-    match_threshold = float(os.getenv("REKOGNITION_MATCH_THRESHOLD", "90.0"))
+    # Default match threshold is 95.0 to eliminate friend-swap false positives
+    configured_threshold = float(os.getenv("REKOGNITION_MATCH_THRESHOLD", "95.0"))
+    match_threshold = max(configured_threshold, 93.0)
+
     try:
         search_res = rekognition.search_users_by_image(
             CollectionId=COLLECTION_ID,
             Image={"Bytes": image_bytes},
             UserMatchThreshold=match_threshold,
-            MaxUsers=1,
+            MaxUsers=3,
         )
     except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("InvalidParameterException", "InvalidImageFormatException"):
+            logger.warning(f"Invalid face image provided to Rekognition ({code}): {e}")
+            return json_response(
+                422,
+                {
+                    "status": "NO_FACE_DETECTED",
+                    "message": "No valid face detected in the camera frame. Please align within the guide and look directly at camera.",
+                    "error_code": code,
+                },
+            )
         return json_response(500, {"error": "RekognitionError", "message": str(e)})
 
     user_matches = search_res.get("UserMatches", [])
@@ -157,9 +174,43 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             },
         )
 
-    matched_user = user_matches[0]["User"]
-    user_id = matched_user["UserId"]
-    confidence = float(user_matches[0]["Similarity"])
+    # Sort matches descending by Similarity to guarantee top candidate
+    user_matches.sort(key=lambda m: float(m.get("Similarity", 0.0)), reverse=True)
+
+    top_match = user_matches[0]
+    top_similarity = float(top_match.get("Similarity", 0.0))
+    top_user = top_match.get("User", {})
+    top_user_id = top_user.get("UserId")
+
+    # Ambiguity Margin Rule:
+    # If a second candidate user matches above the threshold, ensure a clear separation margin (>= 4.0%)
+    if len(user_matches) > 1:
+        runner_up = user_matches[1]
+        runner_up_similarity = float(runner_up.get("Similarity", 0.0))
+        runner_up_user = runner_up.get("User", {})
+        runner_up_id = runner_up_user.get("UserId")
+
+        if runner_up_id and runner_up_id != top_user_id:
+            similarity_gap = top_similarity - runner_up_similarity
+            if similarity_gap < 4.0:
+                logger.warning(
+                    f"Ambiguous biometric match rejected: Candidate 1 {top_user_id} ({top_similarity:.2f}%) vs "
+                    f"Candidate 2 {runner_up_id} ({runner_up_similarity:.2f}%). Gap {similarity_gap:.2f}% < 4.0%"
+                )
+                return json_response(
+                    422,
+                    {
+                        "status": "AMBIGUOUS_MATCH",
+                        "message": "Multiple student profiles closely match this face. Please hold still and look directly into the camera.",
+                        "top_similarity": round(top_similarity, 2),
+                        "runner_up_similarity": round(runner_up_similarity, 2),
+                        "gap": round(similarity_gap, 2),
+                    },
+                )
+
+    matched_user = top_user
+    user_id = top_user_id
+    confidence = top_similarity
 
     # 3. Retrieve User Profile from UsersTable
     users_tbl = dynamodb.Table(USERS_TABLE)

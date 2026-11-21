@@ -7,6 +7,7 @@ Includes smart camera auto-discovery, zero frame buffer latency, and USB reconne
 
 import logging
 import platform
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
 import cv2
@@ -76,6 +77,11 @@ class LogitechWebcam:
         self.fourcc_str = fourcc or config.camera_fourcc
         self.cap: Optional[cv2.VideoCapture] = None
         self._consecutive_read_failures = 0
+        self._thread: Optional[threading.Thread] = None
+        self._running: bool = False
+        self._lock = threading.Lock()
+        self._latest_frame: Optional[np.ndarray] = None
+        self._read_success: bool = False
 
     @staticmethod
     def get_preferred_backend() -> int:
@@ -137,51 +143,49 @@ class LogitechWebcam:
             f"Camera active: {actual_w}x{actual_h} @ {actual_fps:.1f} FPS (Target: {self.width}x{self.height}@{self.fps})"
         )
         self._consecutive_read_failures = 0
+
+        # Launch dedicated background frame grabber thread to prevent buffer lag
+        self._running = True
+        self._thread = threading.Thread(target=self._capture_worker, daemon=True)
+        self._thread.start()
+
         return self
 
-    def reconnect(self, max_wait_sec: float = 30.0) -> bool:
-        """Handle USB disconnect / replug with exponential backoff."""
-        logger.warning(f"Attempting to reconnect camera at index {self.camera_index}...")
-        self.stop()
-        start_time = time.time()
-        backoff = 1.0
-
-        while (time.time() - start_time) < max_wait_sec:
-            try:
-                self.start()
-                if self.is_opened():
-                    logger.info("Camera reconnected successfully.")
-                    return True
-            except Exception as e:
-                logger.debug(f"Reconnect attempt failed ({e}), waiting {backoff}s...")
-                time.sleep(backoff)
-                backoff = min(backoff * 1.5, 5.0)
-
-        logger.error(f"Failed to reconnect camera after {max_wait_sec} seconds.")
-        return False
+    def _capture_worker(self) -> None:
+        """Continuously grab freshest frame to ensure zero frame buffer queueing."""
+        while self._running:
+            if self.cap is None or not self.cap.isOpened():
+                time.sleep(0.01)
+                continue
+            ret, frame = self.cap.read()
+            with self._lock:
+                self._read_success = ret
+                if ret and frame is not None:
+                    self._latest_frame = frame
+            time.sleep(0.005)
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Read a single frame from the video stream with auto-reconnect fallback."""
+        """Read latest frame with zero buffer lag via background thread."""
+        if self._thread is not None and self._thread.is_alive():
+            with self._lock:
+                if self._latest_frame is not None:
+                    return True, self._latest_frame.copy()
+                if not self._read_success and self._consecutive_read_failures > 30:
+                    if self.reconnect():
+                        return self.read()
+                return self._read_success, None
+
+        # Synchronous fallback if thread is disabled or for unit tests
         if self.cap is None or not self.cap.isOpened():
             return False, None
-
-        ret, frame = self.cap.read()
-        if not ret or frame is None:
-            self._consecutive_read_failures += 1
-            if self._consecutive_read_failures > 30:
-                logger.warning("Excessive frame read failures detected. Triggering camera reconnect...")
-                if self.reconnect():
-                    return self.cap.read()
-            return False, None
-
-        self._consecutive_read_failures = 0
-        return True, frame
-
-    def is_opened(self) -> bool:
-        return self.cap is not None and self.cap.isOpened()
+        return self.cap.read()
 
     def stop(self) -> None:
-        """Release camera resource."""
+        """Release camera and terminate frame worker."""
+        self._running = False
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+            self._thread = None
         if self.cap is not None:
             self.cap.release()
             self.cap = None

@@ -28,12 +28,34 @@ export async function fetchAttendance(dateStr, department) {
   } catch (err) {
     console.warn('API fetch fallback:', err)
     const localLogs = JSON.parse(localStorage.getItem('smart_attendance_logs') || '[]')
+    const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
     const filtered = dateStr ? localLogs.filter(l => (l.check_in_time || '').startsWith(dateStr)) : localLogs
+    const presentIds = new Set(filtered.map(l => l.user_id))
+
+    // Perform complete left-join so 100% of enrolled students appear as ABSENT if not checked in
+    const combined = [...filtered]
+    localUsers.forEach(u => {
+      if (!presentIds.has(u.user_id)) {
+        combined.push({
+          user_id: u.user_id,
+          full_name: u.full_name || u.user_id,
+          roll_number: u.roll_number || '',
+          department: u.department || 'General',
+          class_id: u.class_id || '',
+          check_in_time: null,
+          check_in_date: dateStr || new Date().toISOString().split('T')[0],
+          status: 'ABSENT',
+          confidence_score: null,
+          device_id: null
+        })
+      }
+    })
+
     return {
       session_key: `CLASS#${dateStr || new Date().toISOString().split('T')[0]}`,
       date: dateStr || new Date().toISOString().split('T')[0],
-      count: filtered.length,
-      records: filtered
+      count: combined.length,
+      records: combined
     }
   }
 }

@@ -31,9 +31,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     table = dynamodb.Table(USERS_TABLE)
 
     try:
-        response = table.scan(
-            ProjectionExpression="user_id, full_name, department, email, active, enrolled_at"
-        )
-        return json_response(200, response.get("Items", []))
+        # Scan all user fields (including images and biometric metadata)
+        # with pagination loop over LastEvaluatedKey to ensure 100% of enrolled students are returned
+        items = []
+        scan_kwargs = {}
+        while True:
+            response = table.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+        return json_response(200, items)
     except Exception as e:
         return json_response(500, {"error": "ScanFailed", "message": str(e)})

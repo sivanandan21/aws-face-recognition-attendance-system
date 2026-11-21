@@ -33,7 +33,7 @@ class EdgeConfig:
 
     # Face Detection & Padding
     yolo_model_path: str = os.getenv("YOLO_MODEL_PATH", "yolov8s-face.pt")
-    face_padding_percent: float = float(os.getenv("FACE_PADDING_PERCENT", "0.25"))
+    face_padding_percent: float = float(os.getenv("FACE_PADDING_PERCENT", "0.30"))
     face_conf_threshold: float = float(os.getenv("FACE_CONF_THRESHOLD", "0.80"))
     min_face_size: int = int(os.getenv("MIN_FACE_SIZE", "120"))
 
@@ -59,9 +59,9 @@ class EdgeConfig:
     api_base_url: str = os.getenv("API_BASE_URL", "https://api.example.com").rstrip("/")
     api_key: str = os.getenv("API_KEY", "")
     device_id: str = os.getenv("DEVICE_ID", "kiosk-logitech-01")
-    request_timeout_sec: float = float(os.getenv("REQUEST_TIMEOUT_SEC", "6.0"))
+    request_timeout_sec: float = float(os.getenv("REQUEST_TIMEOUT_SEC", "10.0"))
     jpeg_quality: int = int(os.getenv("JPEG_QUALITY", "95"))
-    rekognition_match_threshold: float = float(os.getenv("REKOGNITION_MATCH_THRESHOLD", "90.0"))
+    rekognition_match_threshold: float = float(os.getenv("REKOGNITION_MATCH_THRESHOLD", "95.0"))
 
     # Offline Queue
     db_path: str = os.getenv("DB_PATH", "offline_queue.db")

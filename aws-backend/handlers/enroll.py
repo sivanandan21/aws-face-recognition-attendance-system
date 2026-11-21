@@ -9,6 +9,7 @@ Registers a new user using Amazon Rekognition User Vectors:
 
 import base64
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -16,6 +17,8 @@ from typing import Any, Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
+
+logger = logging.getLogger("enroll")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -77,19 +80,82 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if code != "ConflictException":  # User already exists is acceptable
             return json_response(500, {"error": "CreateUserFailed", "message": str(e)})
 
-    # 2. Index Faces from each provided image (with QualityFilter and MaxFaces=1)
+    # 2. Strict Biometric Validation and Indexing for each provided photo
     indexed_face_ids: List[str] = []
+    quality_filter = os.getenv("REKOGNITION_QUALITY_FILTER", "HIGH")
 
     for idx, img_b64 in enumerate(images):
         try:
             img_bytes = base64.b64decode(img_b64)
+        except Exception as e:
+            logger.warning(f"Failed to decode base64 for photo {idx + 1}: {e}")
+            continue
+
+        # Step A: Validate that EXACTLY ONE face is in frame
+        try:
+            detect_res = rekognition.detect_faces(Image={"Bytes": img_bytes}, Attributes=["DEFAULT"])
+            face_details = detect_res.get("FaceDetails", [])
+            if len(face_details) == 0:
+                logger.warning(f"Enrollment photo {idx + 1} contains 0 faces.")
+                return json_response(
+                    400,
+                    {
+                        "error": "NoFaceDetected",
+                        "message": f"Photo {idx + 1} does not contain a clear face. Please look directly into the camera.",
+                    },
+                )
+            if len(face_details) > 1:
+                logger.warning(f"Enrollment photo {idx + 1} contains {len(face_details)} faces (friend in frame).")
+                return json_response(
+                    400,
+                    {
+                        "error": "MultipleFacesDetected",
+                        "message": f"Photo {idx + 1} contains {len(face_details)} faces. Please ensure only the student is in the frame to prevent identity contamination.",
+                    },
+                )
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code not in ("InvalidParameterException", "InvalidImageFormatException"):
+                logger.warning(f"detect_faces error on photo {idx + 1}: {e}")
+
+        # Step B: Cross-User Face Collision Check (Prevent registering same face under multiple IDs)
+        try:
+            collision_res = rekognition.search_users_by_image(
+                CollectionId=COLLECTION_ID,
+                Image={"Bytes": img_bytes},
+                UserMatchThreshold=95.0,
+                MaxUsers=1,
+            )
+            existing_matches = collision_res.get("UserMatches", [])
+            if existing_matches:
+                existing_user = existing_matches[0].get("User", {})
+                existing_uid = existing_user.get("UserId")
+                existing_sim = float(existing_matches[0].get("Similarity", 0.0))
+                if existing_uid and existing_uid != user_id:
+                    logger.warning(
+                        f"Cross-user collision: Photo {idx + 1} matches existing user {existing_uid} "
+                        f"with {existing_sim:.2f}% similarity."
+                    )
+                    return json_response(
+                        409,
+                        {
+                            "error": "FaceCollisionDetected",
+                            "message": f"This face is already registered under student '{existing_uid}' (similarity: {existing_sim:.1f}%).",
+                            "colliding_user_id": existing_uid,
+                        },
+                    )
+        except ClientError:
+            pass  # Empty collection or newly created collection without indexed users yet
+
+        # Step C: Index Face with MaxFaces=1 and HIGH quality filter
+        try:
             resp = rekognition.index_faces(
                 CollectionId=COLLECTION_ID,
                 Image={"Bytes": img_bytes},
                 ExternalImageId=user_id,
                 DetectionAttributes=["DEFAULT"],
                 MaxFaces=1,
-                QualityFilter="AUTO",
+                QualityFilter=quality_filter,
             )
             for rec in resp.get("FaceRecords", []):
                 indexed_face_ids.append(rec["Face"]["FaceId"])
@@ -104,6 +170,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     ContentType="image/jpeg",
                 )
         except Exception as e:
+            logger.warning(f"Failed to index face for photo {idx + 1}: {e}")
             continue
 
     if not indexed_face_ids:

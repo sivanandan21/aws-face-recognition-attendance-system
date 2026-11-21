@@ -19,6 +19,7 @@ export default function LiveKiosk({ onScanSuccess }) {
   const streamRef = useRef(null)
   const scanLoopTimer = useRef(null)
   const cooldownMap = useRef(new Map())
+  const burstMap = useRef(new Map()) // user_id -> { count: number, firstSeen: number }
 
   useEffect(() => {
     async function init() {
@@ -147,7 +148,8 @@ export default function LiveKiosk({ onScanSuccess }) {
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, vw, vh)
 
-    const detectedFaces = await detectAndMatchAllFaces(video, enrolledUsers, 0.55)
+    // Strict 0.44 Euclidean threshold eliminates false positives and classmate misidentifications
+    const detectedFaces = await detectAndMatchAllFaces(video, enrolledUsers, 0.44)
     setActiveDetections(detectedFaces)
 
     const now = Date.now()
@@ -184,58 +186,77 @@ export default function LiveKiosk({ onScanSuccess }) {
       ctx.fillText(labelText, x + 8, Math.max(16, y - 7))
 
       if (isMatched && face.user) {
-        const lastCheck = cooldownMap.current.get(face.user.user_id) || 0
+        const uid = face.user.user_id
+        const lastCheck = cooldownMap.current.get(uid) || 0
         const cooldownTime = 10000
 
         if (now - lastCheck > cooldownTime) {
-          cooldownMap.current.set(face.user.user_id, now)
+          // Multi-frame consensus check: Require at least 2 consecutive positive detections
+          // of the exact same user_id within 3.0s before triggering live attendance
+          // (prevents single-frame transient noise or friend cross-matching)
+          const burst = burstMap.current.get(uid) || { count: 0, firstSeen: now }
+          if (now - burst.firstSeen > 3000) {
+            burst.count = 0
+            burst.firstSeen = now
+          }
+          burst.count += 1
+          burstMap.current.set(uid, burst)
 
-          const timeNow = new Intl.DateTimeFormat('en-IN', {
-            timeZone: 'Asia/Kolkata',
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true
-          }).format(new Date())
+          if (burst.count >= 2) {
+            burstMap.current.delete(uid)
+            cooldownMap.current.set(uid, now)
 
-          checkInStudent({
-            user_id: face.user.user_id,
-            name: face.user.full_name,
-            department: face.user.department,
-            confidence: face.confidence,
-            device_id: 'web-kiosk-live',
-            timestamp: new Date().toISOString()
-          })
+            const timeNow = new Intl.DateTimeFormat('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            }).format(new Date())
 
-          setRecentVerifications(prev => [
-            {
-              user_id: face.user.user_id,
-              full_name: face.user.full_name,
-              check_in_time: timeNow,
-              confidence_score: face.confidence,
-              status: 'PRESENT'
-            },
-            ...prev.filter(p => p.user_id !== face.user.user_id)
-          ].slice(0, 5))
+            checkInStudent({
+              user_id: uid,
+              name: face.user.full_name,
+              department: face.user.department,
+              confidence: face.confidence,
+              device_id: 'web-kiosk-live',
+              timestamp: new Date().toISOString()
+            })
 
-          if (onScanSuccess) onScanSuccess()
+            setRecentVerifications(prev => [
+              {
+                user_id: uid,
+                full_name: face.user.full_name,
+                check_in_time: timeNow,
+                confidence_score: face.confidence,
+                status: 'PRESENT'
+              },
+              ...prev.filter(p => p.user_id !== uid)
+            ].slice(0, 8))
+
+            setToastMessage(`✓ Verified & Marked Present: ${face.user.full_name}`)
+            setTimeout(() => setToastMessage(''), 3500)
+
+            if (onScanSuccess) onScanSuccess()
+          }
         }
       }
     }
   }
 
   async function handleRemoveVerification(userId, userName) {
-    if (!window.confirm(`Remove ${userName || userId} from present attendance for today?`)) {
+    if (!window.confirm(`Delete today's check-in for ${userName || userId}? Their status will revert to Absent.`)) {
       return
     }
     setRemovingId(userId)
     try {
       // 1. Remove from local live state
       setRecentVerifications(prev => prev.filter(r => r.user_id !== userId))
-      // 2. Clear cooldown so they can be re-scanned if needed
+      // 2. Clear cooldown & burst so they can be re-scanned if needed
       cooldownMap.current.delete(userId)
+      burstMap.current.delete(userId)
       // 3. Call API to remove record from DB / storage
       await removeAttendanceRecord(userId)
-      setToastMessage(`✓ Attendance record for ${userName || userId} removed.`)
+      setToastMessage(`✓ Attendance record for ${userName || userId} removed. Status reverted to Absent.`)
       setTimeout(() => setToastMessage(''), 3500)
       if (onScanSuccess) onScanSuccess()
     } catch (err) {

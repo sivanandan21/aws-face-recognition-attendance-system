@@ -10,12 +10,15 @@ AWS Lambda Handlers: User Management CRUD
 import base64
 from datetime import datetime, timezone, timedelta
 import json
+import logging
 import os
 from typing import Any, Dict, List
 import uuid
 
 import boto3
 from botocore.exceptions import ClientError
+
+logger = logging.getLogger("manage_user")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -137,18 +140,57 @@ def add_faces_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not new_images:
         return json_response(400, {"error": "No images provided"})
 
-    # Index new faces in Rekognition
+    # Index new faces in Rekognition with single-face validation, collision guard, and HIGH quality filter
     new_face_ids = []
+    quality_filter = os.getenv("REKOGNITION_QUALITY_FILTER", "HIGH")
+
     for idx, img_b64 in enumerate(new_images):
         try:
             img_bytes = base64.b64decode(img_b64)
+        except Exception:
+            continue
+
+        # Single-face validation
+        try:
+            det_res = rekognition.detect_faces(Image={"Bytes": img_bytes}, Attributes=["DEFAULT"])
+            faces = det_res.get("FaceDetails", [])
+            if len(faces) == 0:
+                return json_response(400, {"error": "NoFaceDetected", "message": f"Photo {idx + 1} contains no face."})
+            if len(faces) > 1:
+                return json_response(400, {"error": "MultipleFacesDetected", "message": f"Photo {idx + 1} contains multiple faces."})
+        except ClientError:
+            pass
+
+        # Collision check
+        try:
+            col_res = rekognition.search_users_by_image(
+                CollectionId=COLLECTION_ID,
+                Image={"Bytes": img_bytes},
+                UserMatchThreshold=95.0,
+                MaxUsers=1,
+            )
+            matches = col_res.get("UserMatches", [])
+            if matches:
+                ex_uid = matches[0].get("User", {}).get("UserId")
+                if ex_uid and ex_uid != user_id:
+                    return json_response(
+                        409,
+                        {
+                            "error": "FaceCollisionDetected",
+                            "message": f"Photo matches another registered student '{ex_uid}'.",
+                        },
+                    )
+        except ClientError:
+            pass
+
+        try:
             resp = rekognition.index_faces(
                 CollectionId=COLLECTION_ID,
                 Image={"Bytes": img_bytes},
                 ExternalImageId=user_id,
                 DetectionAttributes=["DEFAULT"],
                 MaxFaces=1,
-                QualityFilter="AUTO",
+                QualityFilter=quality_filter,
             )
             for rec in resp.get("FaceRecords", []):
                 new_face_ids.append(rec["Face"]["FaceId"])
