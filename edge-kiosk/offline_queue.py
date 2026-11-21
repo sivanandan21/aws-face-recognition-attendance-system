@@ -20,8 +20,8 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def get_current_ist_timestamp() -> str:
-    """Return ISO 8601 string in Indian Standard Time (IST)."""
-    return datetime.now(IST).isoformat()
+    """Return ISO 8601 string in Indian Standard Time (IST) with seconds precision."""
+    return datetime.now(IST).isoformat(timespec="seconds")
 
 
 class OfflineQueue:

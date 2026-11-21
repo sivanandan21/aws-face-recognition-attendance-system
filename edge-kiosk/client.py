@@ -43,7 +43,9 @@ class AttendanceApiClient:
         Compress image crop to JPEG bytes and transmit to AWS API Gateway.
         Automatically enqueues offline if connection fails.
         """
-        success, encoded_img = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+        success, encoded_img = cv2.imencode(
+            ".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), config.jpeg_quality]
+        )
         if not success:
             return {"status": "ERROR", "message": "Failed to encode image to JPEG"}
 
@@ -53,6 +55,7 @@ class AttendanceApiClient:
         payload = {
             "device_id": self.device_id,
             "timestamp": ts,
+            "captured_at": ts,
             "latitude": latitude,
             "longitude": longitude,
             "image_base64": base64.b64encode(image_bytes).decode("utf-8"),
@@ -117,6 +120,7 @@ class AttendanceApiClient:
         payload = {
             "device_id": record["device_id"],
             "timestamp": record["timestamp_ist"],
+            "captured_at": record["timestamp_ist"],
             "latitude": record.get("latitude"),
             "longitude": record.get("longitude"),
             "image_base64": base64.b64encode(record["image_bytes"]).decode("utf-8"),

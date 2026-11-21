@@ -180,6 +180,25 @@ function mockApiPlugin() {
               if (data.full_name !== undefined) user.full_name = data.full_name
               if (data.department !== undefined) user.department = data.department
               if (data.email !== undefined) user.email = data.email
+              if (data.roll_number !== undefined) user.roll_number = data.roll_number
+              if (data.class_id !== undefined) user.class_id = data.class_id
+              if (data.phone !== undefined) user.phone = data.phone
+              if (data.active !== undefined) user.active = data.active
+              user.updated_at = new Date().toISOString()
+
+              // Also update attendance records if present
+              attendanceRecords = attendanceRecords.map(r => {
+                if (r.user_id === userId) {
+                  return {
+                    ...r,
+                    full_name: user.full_name,
+                    department: user.department,
+                    roll_number: user.roll_number
+                  }
+                }
+                return r
+              })
+
               res.setHeader('Content-Type', 'application/json')
               res.statusCode = 200
               res.end(JSON.stringify(user))
@@ -247,7 +266,13 @@ function mockApiPlugin() {
           if (!user) {
             res.statusCode = 404
             res.end(JSON.stringify({ error: 'User not found' }))
-          } else if (!user.images || faceIndex < 0 || faceIndex >= user.images.length) {
+          } else if (!user.images || user.images.length <= 1) {
+            res.statusCode = 400
+            res.end(JSON.stringify({
+              error: 'CannotDeleteLastFace',
+              message: "Cannot delete the student's only remaining face photo. Add a replacement angle first."
+            }))
+          } else if (faceIndex < 0 || faceIndex >= user.images.length) {
             res.statusCode = 400
             res.end(JSON.stringify({ error: 'Invalid face index' }))
           } else {

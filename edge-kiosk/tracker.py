@@ -5,7 +5,7 @@ preventing redundant API requests when a user stays in camera view.
 """
 
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 from config import config
 
@@ -18,9 +18,13 @@ class TrackedFace:
         self.first_seen = time.time()
         self.last_seen = time.time()
         self.last_checkin_timestamp: float = 0.0
+        self.consecutive_valid_frames: int = 0
+        self.burst_candidates: List[Tuple[float, np.ndarray, float, float]] = []
+        self.burst_start_time: float = 0.0
 
     def mark_checked_in(self) -> None:
         self.last_checkin_timestamp = time.time()
+        self.clear_burst()
 
     def is_on_cooldown(self, cooldown_seconds: float = config.cooldown_seconds) -> bool:
         if self.last_checkin_timestamp == 0.0:
@@ -34,6 +38,50 @@ class TrackedFace:
             return 0.0
         elapsed = time.time() - self.last_checkin_timestamp
         return max(0.0, cooldown_seconds - elapsed)
+
+    def add_burst_candidate(
+        self, crop: np.ndarray, sharpness: float, confidence: float
+    ) -> None:
+        """Add a candidate frame to the burst selection buffer."""
+        now = time.time()
+        if len(self.burst_candidates) == 0:
+            self.burst_start_time = now
+
+        score = (sharpness / 100.0) * confidence
+        self.burst_candidates.append((score, crop, sharpness, confidence))
+        self.consecutive_valid_frames += 1
+
+    def is_burst_ready(
+        self,
+        min_frames: int = config.min_consecutive_valid_frames,
+        target_frames: int = config.burst_frame_count,
+        max_window_sec: float = config.burst_window_seconds,
+    ) -> bool:
+        """
+        Burst window is ready for recognition when:
+        1. We reached target_frames (e.g. 4), OR
+        2. Window time elapsed and we have at least min_frames (e.g. >= 2).
+        """
+        n_candidates = len(self.burst_candidates)
+        if n_candidates >= target_frames:
+            return True
+        if n_candidates >= min_frames and self.burst_start_time > 0:
+            if (time.time() - self.burst_start_time) >= max_window_sec:
+                return True
+        return False
+
+    def get_best_burst_crop(self) -> Optional[np.ndarray]:
+        """Returns the highest scoring face crop from the burst window."""
+        if not self.burst_candidates:
+            return None
+        best = max(self.burst_candidates, key=lambda item: item[0])
+        return best[1]
+
+    def clear_burst(self) -> None:
+        """Reset burst candidates buffer."""
+        self.burst_candidates.clear()
+        self.burst_start_time = 0.0
+        self.consecutive_valid_frames = 0
 
 
 class CentroidTracker:

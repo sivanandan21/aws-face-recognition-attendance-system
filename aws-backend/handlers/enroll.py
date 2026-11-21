@@ -11,11 +11,13 @@ import base64
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 AWS_REGION = os.getenv("AWS_REGION_NAME", "ap-south-1")
 USERS_TABLE = os.getenv("USERS_TABLE", "SmartAttendanceUsers")
@@ -55,6 +57,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     user_id = body.get("user_id", "").strip()
     full_name = body.get("full_name", "").strip()
     department = body.get("department", "Engineering").strip()
+    roll_number = body.get("roll_number", "").strip()
+    class_id = body.get("class_id", "").strip()
+    phone = body.get("phone", "").strip()
     email = body.get("email", "").strip()
     images = body.get("images", [])  # List of 3-5 base64 encoded images
 
@@ -72,7 +77,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if code != "ConflictException":  # User already exists is acceptable
             return json_response(500, {"error": "CreateUserFailed", "message": str(e)})
 
-    # 2. Index Faces from each provided image
+    # 2. Index Faces from each provided image (with QualityFilter and MaxFaces=1)
     indexed_face_ids: List[str] = []
 
     for idx, img_b64 in enumerate(images):
@@ -83,6 +88,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 Image={"Bytes": img_bytes},
                 ExternalImageId=user_id,
                 DetectionAttributes=["DEFAULT"],
+                MaxFaces=1,
                 QualityFilter="AUTO",
             )
             for rec in resp.get("FaceRecords", []):
@@ -121,15 +127,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     # 4. Save User Record in DynamoDB Users table
     table = dynamodb.Table(USERS_TABLE)
+    now_ist_str = datetime.now(IST).isoformat()
     table.put_item(
         Item={
             "user_id": user_id,
             "full_name": full_name,
+            "roll_number": roll_number,
             "department": department,
+            "class_id": class_id,
             "email": email,
+            "phone": phone,
             "face_ids": indexed_face_ids,
+            "images": images,
             "active": True,
-            "enrolled_at": datetime.now(timezone.utc).isoformat(),
+            "enrolled_at": now_ist_str,
+            "updated_at": now_ist_str,
         }
     )
 
@@ -139,6 +151,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             "status": "ENROLLED",
             "user_id": user_id,
             "full_name": full_name,
+            "roll_number": roll_number,
+            "department": department,
             "faces_indexed": len(indexed_face_ids),
             "message": f"Successfully enrolled {full_name} with {len(indexed_face_ids)} face vectors.",
         },

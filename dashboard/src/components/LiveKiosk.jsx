@@ -188,7 +188,12 @@ export default function LiveKiosk({ onScanSuccess }) {
         if (now - lastCheck > cooldownTime) {
           cooldownMap.current.set(face.user.user_id, now)
 
-          const timeNow = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+          const timeNow = new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }).format(new Date())
           
           checkInStudent({
             user_id: face.user.user_id,
@@ -230,7 +235,12 @@ export default function LiveKiosk({ onScanSuccess }) {
     if (t.includes(':') && (t.includes('AM') || t.includes('PM'))) return t
     try {
       const d = new Date(t)
-      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      return new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(d)
     } catch {
       return t
     }

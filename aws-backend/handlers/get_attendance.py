@@ -76,12 +76,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 break
             scan_kwargs["ExclusiveStartKey"] = user_resp["LastEvaluatedKey"]
 
+        user_map = {u["user_id"]: u for u in all_users}
+
+        # Sync updated user details into attendance records dynamically
+        for r in records:
+            u_info = user_map.get(r["user_id"])
+            if u_info:
+                if u_info.get("full_name"):
+                    r["full_name"] = u_info["full_name"]
+                if u_info.get("department"):
+                    r["department"] = u_info["department"]
+                r["roll_number"] = u_info.get("roll_number", r.get("roll_number", ""))
+
         # 3. Add ABSENT entries for users not in attendance records
         for user in all_users:
             if user["user_id"] not in present_user_ids:
                 records.append({
                     "user_id": user["user_id"],
                     "full_name": user.get("full_name", ""),
+                    "roll_number": user.get("roll_number", ""),
                     "department": user.get("department", ""),
                     "check_in_time": None,
                     "status": "ABSENT",

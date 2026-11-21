@@ -122,6 +122,10 @@ export async function fetchUser(userId) {
 }
 
 export async function updateUser(userId, data) {
+  const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const updatedLocal = localUsers.map(u => u.user_id === userId ? { ...u, ...data, updated_at: new Date().toISOString() } : u)
+  localStorage.setItem('smart_attendance_users', JSON.stringify(updatedLocal))
+
   const url = `${BASE_URL}/users/${encodeURIComponent(userId)}`
   try {
     const res = await fetch(url, {
@@ -132,12 +136,16 @@ export async function updateUser(userId, data) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.json()
   } catch (err) {
-    console.warn('updateUser error:', err)
-    throw err
+    console.warn('updateUser remote fallback:', err)
+    return updatedLocal.find(u => u.user_id === userId) || data
   }
 }
 
 export async function deleteUser(userId) {
+  const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const updatedLocal = localUsers.map(u => u.user_id === userId ? { ...u, active: false } : u)
+  localStorage.setItem('smart_attendance_users', JSON.stringify(updatedLocal))
+
   const url = `${BASE_URL}/users/${encodeURIComponent(userId)}`
   try {
     const res = await fetch(url, {
@@ -147,12 +155,21 @@ export async function deleteUser(userId) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.json()
   } catch (err) {
-    console.warn('deleteUser error:', err)
-    throw err
+    console.warn('deleteUser remote fallback:', err)
+    return { message: `User ${userId} deactivated`, user: { user_id: userId, active: false } }
   }
 }
 
 export async function addUserFaces(userId, images) {
+  const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const targetUser = localUsers.find(u => u.user_id === userId)
+  if (targetUser) {
+    if (!targetUser.images) targetUser.images = []
+    targetUser.images.push(...images)
+    targetUser.updated_at = new Date().toISOString()
+    localStorage.setItem('smart_attendance_users', JSON.stringify(localUsers))
+  }
+
   const url = `${BASE_URL}/users/${encodeURIComponent(userId)}/faces`
   try {
     const res = await fetch(url, {
@@ -163,23 +180,45 @@ export async function addUserFaces(userId, images) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.json()
   } catch (err) {
-    console.warn('addUserFaces error:', err)
-    throw err
+    console.warn('addUserFaces remote fallback:', err)
+    return {
+      message: `Added ${images.length} face(s)`,
+      total_faces: targetUser ? targetUser.images.length : images.length,
+      user: targetUser
+    }
   }
 }
 
 export async function removeUserFace(userId, faceIndex) {
+  const localUsers = JSON.parse(localStorage.getItem('smart_attendance_users') || '[]')
+  const targetUser = localUsers.find(u => u.user_id === userId)
+  if (targetUser && targetUser.images) {
+    if (targetUser.images.length <= 1) {
+      throw new Error("Cannot delete the student's only remaining face photo. Add a replacement angle first.")
+    }
+    targetUser.images.splice(faceIndex, 1)
+    targetUser.updated_at = new Date().toISOString()
+    localStorage.setItem('smart_attendance_users', JSON.stringify(localUsers))
+  }
+
   const url = `${BASE_URL}/users/${encodeURIComponent(userId)}/faces/${faceIndex}`
   try {
     const res = await fetch(url, {
       method: 'DELETE',
       headers: getHeaders()
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}))
+      throw new Error(errBody.message || `HTTP ${res.status}`)
+    }
     return await res.json()
   } catch (err) {
-    console.warn('removeUserFace error:', err)
-    throw err
+    if (err.message && err.message.includes("Cannot delete")) throw err
+    console.warn('removeUserFace remote fallback:', err)
+    return {
+      message: `Removed face at index ${faceIndex}`,
+      total_faces: targetUser && targetUser.images ? targetUser.images.length : 0
+    }
   }
 }
 

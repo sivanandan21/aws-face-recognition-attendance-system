@@ -23,6 +23,43 @@ class DetectedFace(NamedTuple):
     padded_bbox: Tuple[int, int, int, int]
 
 
+def enhance_low_light_clahe(
+    crop: np.ndarray,
+    brightness_threshold: float = config.clahe_brightness_threshold,
+    clip_limit: float = config.clahe_clip_limit,
+) -> np.ndarray:
+    """
+    Conditionally enhances dim or unevenly lit face crops using CLAHE on the L-channel
+    in LAB color space. Leaves adequately lit images untouched.
+    """
+    if crop is None or crop.size == 0:
+        return crop
+
+    # Evaluate mean brightness on grayscale
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    mean_brightness = float(np.mean(gray))
+
+    if mean_brightness >= brightness_threshold:
+        return crop
+
+    # Apply CLAHE to L-channel
+    lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(8, 8))
+    cl = clahe.apply(l_chan)
+    merged_lab = cv2.merge((cl, a_chan, b_chan))
+    enhanced = cv2.cvtColor(merged_lab, cv2.COLOR_LAB2BGR)
+    return enhanced
+
+
+def score_face_crop(sharpness: float, confidence: float) -> float:
+    """
+    Composite score combining Laplacian sharpness variance and detection confidence.
+    Used to select the sharpest, highest-confidence frame from a burst window.
+    """
+    return float((sharpness / 100.0) * confidence)
+
+
 class YOLOFaceDetector:
     def __init__(
         self,

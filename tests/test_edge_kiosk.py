@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from camera import LogitechWebcam, list_connected_cameras, find_best_camera_index
 from client import AttendanceApiClient
-from detector import DetectedFace, YOLOFaceDetector
+from detector import DetectedFace, YOLOFaceDetector, enhance_low_light_clahe, score_face_crop
 from geofence import haversine_distance_meters, is_inside_campus
 from liveness import (
     calculate_ear,
@@ -342,3 +342,72 @@ def test_camera_auto_discovery_fallback():
     best_idx = find_best_camera_index()
     assert isinstance(best_idx, int)
     assert best_idx >= 0
+
+
+def test_clahe_enhancement_low_light_vs_bright():
+    """Verify CLAHE enhances dim/uneven crops and preserves bright crops."""
+    # Dim crop (mean brightness ~ 40)
+    dim_crop = np.full((120, 120, 3), 40, dtype=np.uint8)
+    enhanced_dim = enhance_low_light_clahe(dim_crop, brightness_threshold=75.0, clip_limit=2.0)
+    assert enhanced_dim is not None
+    assert enhanced_dim.shape == dim_crop.shape
+
+    # Bright crop (mean brightness ~ 140)
+    bright_crop = np.full((120, 120, 3), 140, dtype=np.uint8)
+    enhanced_bright = enhance_low_light_clahe(bright_crop, brightness_threshold=75.0)
+    # Untouched identity
+    assert np.array_equal(bright_crop, enhanced_bright)
+
+
+def test_burst_frame_selection_and_consensus():
+    """Verify burst buffer collects frames and selects highest scoring crop."""
+    track = TrackedFace(track_id=1, centroid=(100, 100))
+    assert track.consecutive_valid_frames == 0
+    assert len(track.burst_candidates) == 0
+
+    crop1 = np.full((100, 100, 3), 50, dtype=np.uint8)
+    crop2 = np.full((100, 100, 3), 100, dtype=np.uint8)
+    crop3 = np.full((100, 100, 3), 150, dtype=np.uint8)
+
+    # Frame 1: sharpness 90, conf 0.82 -> score = 0.738
+    track.add_burst_candidate(crop1, sharpness=90.0, confidence=0.82)
+    assert track.consecutive_valid_frames == 1
+    assert track.is_burst_ready(min_frames=2, target_frames=3) is False
+
+    # Frame 2: sharpness 150, conf 0.95 -> score = 1.425 (Sharpest!)
+    track.add_burst_candidate(crop2, sharpness=150.0, confidence=0.95)
+    assert track.consecutive_valid_frames == 2
+
+    # Frame 3: sharpness 110, conf 0.85 -> score = 0.935
+    track.add_burst_candidate(crop3, sharpness=110.0, confidence=0.85)
+    assert track.consecutive_valid_frames == 3
+    assert track.is_burst_ready(min_frames=2, target_frames=3) is True
+
+    # Best crop must be crop2
+    best = track.get_best_burst_crop()
+    assert np.array_equal(best, crop2)
+
+    # Clear burst
+    track.clear_burst()
+    assert track.consecutive_valid_frames == 0
+    assert len(track.burst_candidates) == 0
+
+
+def test_padding_percent_expanded_25():
+    """Verify 25% padding calculation expands bounding boxes symmetrically."""
+    detector = YOLOFaceDetector(conf_threshold=0.80, padding_percent=0.25)
+    # (100, 100, 60, 60) on 640x480 frame
+    # 25% of 60 = 15
+    px, py, pw, ph = detector.apply_padding(100, 100, 60, 60, 640, 480)
+    assert px == 85
+    assert py == 85
+    assert pw == 90
+    assert ph == 90
+
+
+def test_score_face_crop():
+    """Verify score calculation gives priority to higher sharpness and confidence."""
+    score1 = score_face_crop(sharpness=120.0, confidence=0.90)
+    score2 = score_face_crop(sharpness=60.0, confidence=0.90)
+    assert score1 > score2
+    assert score1 == (120.0 / 100.0) * 0.90

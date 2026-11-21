@@ -185,3 +185,45 @@ class LivenessGate:
 
         is_live = self.blink_count >= self.required_blinks
         return is_live, avg_ear, self.blink_count
+
+    def check_head_pose(self, frame: np.ndarray) -> Tuple[bool, str]:
+        """
+        Estimate rough head pose and facial symmetry.
+        Rejects extreme yaw (> ~30 deg) or pitch (> ~20 deg) with a helpful prompt
+        ('Turn slightly toward camera') while smoothly accepting normal natural angles.
+        """
+        if frame is None or frame.size == 0 or self.face_mesh is None:
+            return True, "Pose OK"
+
+        try:
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w = frame.shape[:2]
+            results = self.face_mesh.process(rgb_frame)
+            if not results or not results.multi_face_landmarks:
+                return True, "Pose OK"
+
+            lm = results.multi_face_landmarks[0].landmark
+            nose = (lm[1].x * w, lm[1].y * h)
+            left_eye = (lm[33].x * w, lm[33].y * h)
+            right_eye = (lm[263].x * w, lm[263].y * h)
+            forehead = (lm[10].x * w, lm[10].y * h)
+            chin = (lm[152].x * w, lm[152].y * h)
+
+            d_left = float(np.hypot(nose[0] - left_eye[0], nose[1] - left_eye[1]))
+            d_right = float(np.hypot(nose[0] - right_eye[0], nose[1] - right_eye[1]))
+
+            if d_right > 0 and d_left > 0:
+                ratio = d_left / d_right
+                if ratio < 0.32 or ratio > 3.1:
+                    return False, "Turn slightly toward camera"
+
+            d_top = float(np.hypot(nose[0] - forehead[0], nose[1] - forehead[1]))
+            d_bottom = float(np.hypot(nose[0] - chin[0], nose[1] - chin[1]))
+            if d_top > 0 and d_bottom > 0:
+                v_ratio = d_top / d_bottom
+                if v_ratio < 0.35 or v_ratio > 3.0:
+                    return False, "Turn slightly toward camera"
+
+            return True, "Pose OK"
+        except Exception:
+            return True, "Pose OK"

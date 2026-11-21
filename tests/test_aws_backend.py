@@ -23,6 +23,7 @@ import check_in
 import enroll
 import get_attendance
 import get_users
+import manage_user
 
 
 # ==========================================
@@ -190,6 +191,79 @@ def test_checkin_success_and_duplicate_lock():
         assert "Already marked present" in body2["message"]
 
 
+def test_checkin_ist_midnight_boundary_date():
+    """Verify check-in at 00:15 AM IST logs under the IST date, not the previous UTC day."""
+    fake_img = base64.b64encode(b"dummy").decode("utf-8")
+    # 00:15 AM on 2026-11-21 IST corresponds to 2026-11-20T18:45:00Z in UTC
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "image_base64": fake_img,
+            "device_id": "kiosk-01",
+            "latitude": 12.9710,
+            "longitude": 79.1591,
+            "timestamp": "2026-11-21T00:15:30+05:30",
+        }),
+    }
+
+    mock_table = MagicMock()
+    mock_users_table = MagicMock()
+    mock_users_table.get_item.return_value = {
+        "Item": {"user_id": "STU101", "full_name": "Rohan Sharma", "department": "CSE"}
+    }
+
+    with patch.object(check_in.rekognition, "search_users_by_image") as mock_search, \
+         patch.object(check_in.dynamodb, "Table") as mock_table_factory, \
+         patch.object(check_in.s3, "put_object"):
+
+        mock_table_factory.side_effect = lambda name: mock_users_table if "Users" in name else mock_table
+        mock_search.return_value = {
+            "UserMatches": [{"Similarity": 98.2, "User": {"UserId": "STU101"}}]
+        }
+
+        resp = check_in.lambda_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["session"] == "CLASS#2026-11-21"
+        assert body["check_in_date"] == "2026-11-21"
+        assert body["check_in_time"] == "12:15 AM"
+
+
+def test_checkin_exact_10_30_detection_time():
+    """Verify check-in at 10:30 returns exact 10:30 AM in response."""
+    fake_img = base64.b64encode(b"dummy").decode("utf-8")
+    event = {
+        "headers": {"x-api-key": "dev-kiosk-secret-key-change-in-prod"},
+        "body": json.dumps({
+            "image_base64": fake_img,
+            "device_id": "kiosk-01",
+            "latitude": 12.9710,
+            "longitude": 79.1591,
+            "timestamp": "2026-11-21T10:30:00+05:30",
+        }),
+    }
+
+    mock_table = MagicMock()
+    mock_users_table = MagicMock()
+    mock_users_table.get_item.return_value = {
+        "Item": {"user_id": "STU101", "full_name": "Rohan Sharma", "department": "CSE"}
+    }
+
+    with patch.object(check_in.rekognition, "search_users_by_image") as mock_search, \
+         patch.object(check_in.dynamodb, "Table") as mock_table_factory, \
+         patch.object(check_in.s3, "put_object"):
+
+        mock_table_factory.side_effect = lambda name: mock_users_table if "Users" in name else mock_table
+        mock_search.return_value = {
+            "UserMatches": [{"Similarity": 97.0, "User": {"UserId": "STU101"}}]
+        }
+
+        resp = check_in.lambda_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["check_in_time"] == "10:30 AM"
+
+
 # ==========================================
 # 3. ATTENDANCE & USERS QUERY TESTS
 # ==========================================
@@ -226,3 +300,102 @@ def test_get_users():
         body = json.loads(resp["body"])
         assert len(body) == 1
         assert body[0]["user_id"] == "STU101"
+
+
+# ==========================================
+# 4. USER MANAGEMENT & EDIT TESTS
+# ==========================================
+
+def test_update_user_handler():
+    event = {
+        "pathParameters": {"user_id": "STU101"},
+        "body": json.dumps({
+            "full_name": "Rohan S. Sharma",
+            "roll_number": "21BCE1042",
+            "department": "CSE",
+            "email": "rohan.new@example.com",
+            "phone": "+91 98765 43210",
+        }),
+    }
+    mock_table = MagicMock()
+    mock_table.update_item.return_value = {
+        "Attributes": {
+            "user_id": "STU101",
+            "full_name": "Rohan S. Sharma",
+            "roll_number": "21BCE1042",
+            "department": "CSE",
+            "email": "rohan.new@example.com",
+            "phone": "+91 98765 43210",
+            "updated_at": "2026-11-21T10:30:00+05:30",
+        }
+    }
+    with patch.object(manage_user.dynamodb, "Table", return_value=mock_table):
+        resp = manage_user.update_user_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["full_name"] == "Rohan S. Sharma"
+        assert body["roll_number"] == "21BCE1042"
+
+
+def test_add_faces_handler():
+    fake_img = base64.b64encode(b"new-face-crop").decode("utf-8")
+    event = {
+        "pathParameters": {"user_id": "STU101"},
+        "body": json.dumps({"images": [fake_img]}),
+    }
+    mock_table = MagicMock()
+    mock_table.update_item.return_value = {
+        "Attributes": {
+            "user_id": "STU101",
+            "images": [fake_img, fake_img],
+            "face_ids": ["fid-1", "fid-2"],
+        }
+    }
+    with patch.object(manage_user.rekognition, "index_faces") as mock_index, \
+         patch.object(manage_user.rekognition, "associate_faces") as mock_assoc, \
+         patch.object(manage_user.dynamodb, "Table", return_value=mock_table):
+
+        mock_index.return_value = {"FaceRecords": [{"Face": {"FaceId": "fid-2"}}]}
+
+        resp = manage_user.add_faces_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["total_faces"] == 2
+
+
+def test_remove_face_safeguard_prevents_last_photo_deletion():
+    event = {
+        "pathParameters": {"user_id": "STU101", "face_id": "0"},
+    }
+    mock_table = MagicMock()
+    mock_table.get_item.return_value = {
+        "Item": {"user_id": "STU101", "images": ["only-image-b64"], "face_ids": ["fid-1"]}
+    }
+    with patch.object(manage_user.dynamodb, "Table", return_value=mock_table):
+        resp = manage_user.remove_face_handler(event, None)
+        assert resp["statusCode"] == 400
+        body = json.loads(resp["body"])
+        assert "Cannot delete the student's only remaining face photo" in body["message"]
+
+
+def test_remove_face_success():
+    event = {
+        "pathParameters": {"user_id": "STU101", "face_id": "1"},
+    }
+    mock_table = MagicMock()
+    mock_table.get_item.return_value = {
+        "Item": {"user_id": "STU101", "images": ["img1", "img2"], "face_ids": ["fid-1", "fid-2"]}
+    }
+    mock_table.update_item.return_value = {
+        "Attributes": {"user_id": "STU101", "images": ["img1"], "face_ids": ["fid-1"]}
+    }
+    with patch.object(manage_user.rekognition, "disassociate_faces") as mock_disassoc, \
+         patch.object(manage_user.rekognition, "delete_faces") as mock_del, \
+         patch.object(manage_user.dynamodb, "Table", return_value=mock_table):
+
+        resp = manage_user.remove_face_handler(event, None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["total_faces"] == 1
+        mock_disassoc.assert_called_once()
+        mock_del.assert_called_once()

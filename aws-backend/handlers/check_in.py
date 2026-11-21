@@ -81,12 +81,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return json_response(400, {"error": "Bad Request", "message": "Invalid base64 encoding"})
 
     device_id = body.get("device_id", "unknown-kiosk")
-    client_ts_str = body.get("timestamp")
+    client_ts_str = body.get("captured_at") or body.get("timestamp")
 
-    # Determine IST timestamp
+    # Determine IST timestamp (Asia/Kolkata UTC+05:30)
     if client_ts_str:
         try:
-            ts_dt = datetime.fromisoformat(client_ts_str)
+            parsed_dt = datetime.fromisoformat(str(client_ts_str).replace("Z", "+00:00"))
+            if parsed_dt.tzinfo is None:
+                ts_dt = parsed_dt.replace(tzinfo=IST)
+            else:
+                ts_dt = parsed_dt.astimezone(IST)
         except Exception:
             ts_dt = datetime.now(IST)
     else:
@@ -94,6 +98,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     ist_date = ts_dt.strftime("%Y-%m-%d")
     ist_time_str = ts_dt.strftime("%H:%M")
+    ist_time_formatted = ts_dt.strftime("%I:%M %p")
     session_key = f"CLASS#{ist_date}"
 
     # 1. Geo-fencing Validation
@@ -121,11 +126,12 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             )
 
     # 2. Rekognition User Vector Search (SearchUsersByImage)
+    match_threshold = float(os.getenv("REKOGNITION_MATCH_THRESHOLD", "90.0"))
     try:
         search_res = rekognition.search_users_by_image(
             CollectionId=COLLECTION_ID,
             Image={"Bytes": image_bytes},
-            UserMatchThreshold=92.0,
+            UserMatchThreshold=match_threshold,
             MaxUsers=1,
         )
     except ClientError as e:
@@ -159,6 +165,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     users_tbl = dynamodb.Table(USERS_TABLE)
     user_item = users_tbl.get_item(Key={"user_id": user_id}).get("Item", {})
     full_name = user_item.get("full_name", user_id)
+    roll_number = user_item.get("roll_number", "")
     department = user_item.get("department", "General")
 
     # 4. Status determination (PRESENT vs LATE)
@@ -185,8 +192,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "session_key": session_key,
                 "user_id": user_id,
                 "full_name": full_name,
+                "roll_number": roll_number,
                 "department": department,
                 "check_in_time": ts_dt.isoformat(),
+                "check_in_date": ist_date,
+                "check_in_time_ist": ist_time_formatted,
                 "status": status,
                 "confidence_score": round(confidence, 2),
                 "device_id": device_id,
@@ -200,10 +210,13 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "status": status,
                 "user_id": user_id,
                 "name": full_name,
+                "roll_number": roll_number,
                 "department": department,
                 "confidence": round(confidence, 2),
                 "session": session_key,
                 "timestamp": ts_dt.isoformat(),
+                "check_in_time": ist_time_formatted,
+                "check_in_date": ist_date,
                 "message": f"Attendance recorded as {status}",
             },
         )
@@ -215,7 +228,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     "status": "ALREADY_MARKED",
                     "user_id": user_id,
                     "name": full_name,
+                    "roll_number": roll_number,
                     "department": department,
+                    "timestamp": ts_dt.isoformat(),
+                    "check_in_time": ist_time_formatted,
                     "message": "Already marked present today",
                 },
             )

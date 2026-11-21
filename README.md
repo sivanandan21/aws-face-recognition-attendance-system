@@ -109,38 +109,51 @@ This production-grade system has been extensively refactored, redesigned, and up
 
 ## Key Capabilities & Feature Highlights
 
-### 1. Multi-Person Biometric Recognition Engine
-- **Simultaneous Group Check-In:** Unlike standard single-face biometric turnstiles, the detection pipeline uses `faceapi.detectAllFaces()` with SSD MobileNet V1 to isolate and track **multiple individuals in a single camera frame simultaneously**.
+### 1. Multi-Person Biometric Recognition Engine & Accuracy Pipeline
+- **Multi-Frame Burst Consensus & Best-Frame Selection:** Gathers a burst window of 3–5 consecutive frames over ~0.6s per tracked face. Evaluates combined Laplacian sharpness and detection confidence to select the single sharpest, highest-quality crop for AWS Rekognition.
+- **Adaptive Lighting Preprocessing (CLAHE):** Automatically detects low-light face crops (mean L-channel < 75 in LAB color space) and applies Contrast Limited Adaptive Histogram Equalization (`clipLimit=2.0`, `tileGridSize=(8,8)`) to preserve facial geometry in dim environments.
+- **Smart 25%–30% Bounding Box Padding:** Expands raw YOLO face crops with 25% symmetric margin clamped cleanly to frame borders, ensuring Rekognition captures full facial landmarks (forehead, chin, ears, jawline).
+- **Head-Pose & Quality Gates:** Rejects extreme yaw (>30°) and pitch (>20°) using landmark symmetry (`"Turn slightly toward camera"`), enforces minimum 120×120px face size and minimum 110.0 Laplacian sharpness.
 - **High-Precision 128-D Descriptors:** Pre-computes 128-dimensional biometric embeddings using deep residual neural networks (ResNet), cached in memory for sub-millisecond Euclidean distance evaluation via `faceapi.FaceMatcher`.
 - **Intelligent Cooldown Gate:** Tracks each verified student with a non-blocking 15-second cooldown cache. Students walking together are all recognized, marked present, and prevented from creating duplicate DynamoDB log spam.
-- **Zero Mock / Pure Live Data:** All legacy mock/placeholder records (`Aarav Patel`, `Priya Sharma`, etc.) have been completely purged; only authentic enrolled students from DynamoDB/Cloud are recognized.
+- **Strict UserMatchThreshold (90%–95%):** Guaranteed rejection of unknown/unregistered visitors.
 
-### 2. Bespoke Editorial UI/UX Design System
+### 2. Real-Time Date & Time Synchronization (Asia/Kolkata IST)
+- **Zero UTC Date-Shift Bugs:** Eliminates the critical UTC date-shift issue (where 00:00–05:30 AM IST check-ins logged under yesterday's UTC date). All Edge Kiosk timestamps, AWS Lambda handlers, and DynamoDB session keys (`CLASS#YYYY-MM-DD`) strictly adhere to `Asia/Kolkata` (UTC+05:30).
+- **Live Ticking Header Clock:** Synchronized IST ticking clock on both the Web Dashboard header (`DD MMM YYYY, hh:mm:ss A IST`) and the Edge Kiosk OpenCV HUD.
+- **Instant Silent Polling:** Overview roster silently auto-refreshes every 2.5 seconds without flickering loading spinners so a 10:30 detection appears live on screen at 10:30 immediately.
+
+### 3. Comprehensive Student Directory & Biometric Management
+- **Full Student Profile Editing:** Slide-over modal allows instant updates to student Name, Roll Number, Department, Class Section, Email, Phone, and Active status.
+- **Multi-Angle Face Gallery:** Inspect all enrolled biometric vectors. Safely remove degraded angles with an automatic last-face deletion safeguard (`>= 1` face required).
+- **Add Biometric Angles On-the-Fly:** Upload new high-resolution reference photos or capture live snapshots directly via Logitech/USB webcam. Automatically associates new vectors to the student's Rekognition User ID.
+
+### 4. Bespoke Editorial UI/UX Design System
 Custom-engineered to match luxury architectural design specifications:
 - **Design Tokens:** Warm ceramic canvas (`#F5F4F0`), pure architectural sheet (`#FFFFFF`), slim navigation rail (`#FAF9F6`), carbon typography (`#141413`), forest pine accent (`#166534`), and muted status pills (`#7B9478` Present, `#B58E43` Late, `#864446` Absent).
 - **Typography:** Serif `Newsreader` headlines combined with tabular-nums `Inter` body for precision alignment of student IDs, timestamps, and confidence percentages.
 - **5 Tailored Screens:**
-  1. **Today's Attendance (Overview):** 96×96 Donut progress ring, 4 large KPI display numerals, segmented status pills, 240px search bar, hairline roster table with initials avatar bubbles.
+  1. **Today's Attendance (Overview):** 96×96 Donut progress ring, 4 large KPI display numerals, segmented status pills, 240px search bar, hairline roster table with initials avatar bubbles, Students Directory toggle, and direct Student Edit actions.
   2. **Live Kiosk Check-In:** Matte espresso viewfinder (`#161614`), gold L-bracket guides, floating resolution indicator, active multi-face HUD canvas, recent verifications stream.
   3. **Student Enrollment Studio:** 5-slot pose grid (Frontal, Slight Left, Slight Right, Neutral, Extra Angle), minimum 3 required indicator progress bar, live camera snapshot mode, real-time index & vector save.
   4. **System Settings:** Daily late cutoff time picker (IST), Rekognition match threshold slider (50%–99%), minimum angle selector (3, 4, 5), auto-absent session toggle, hardware camera device selector, live cloud health indicator (DynamoDB & Rekognition connected).
-  5. **Attendance Reports & Analytics:** 3-metric statistical summary strip, calendar date picker pill, department filter dropdown, attendance status dropdown, unified search, and 1-click verified CSV export.
+  5. **Attendance Reports & Analytics:** 3-metric statistical summary strip, calendar date picker pill, department filter dropdown, attendance status dropdown, unified search, and 1-click verified CSV export with Roll Number support.
 - **Fully Responsive Navigation:** 76px desktop icon rail transitions smoothly to an ergonomic iOS-style bottom navigation bar on mobile devices (<768px).
 
-### 3. Edge Kiosk Hardware & Computer Vision Pipeline
+### 5. Edge Kiosk Hardware & Computer Vision Pipeline
 - **Logitech USB Optimization:** Auto-selects `cv2.CAP_DSHOW` (Windows) or `cv2.CAP_V4L2` (Linux) with 1080p/720p resolution at 30 FPS over `MJPG` FourCC codec, buffer size 1 for zero frame latency.
 - **Multi-Stage Local Quality Gates:**
-  - *Min Face Size Gate:* Rejects bounding boxes smaller than 112×112 pixels (`"Move closer - face too small"`).
+  - *Min Face Size Gate:* Rejects bounding boxes smaller than 120×120 pixels (`"Move closer - face too small"`).
   - *Exposure Gate:* Rejects underexposed (< 45) or washed-out (> 220) frames.
-  - *Sharpness Gate:* Laplacian variance blur filter ($var \ge 100.0$) (`"Hold still - image blurry"`).
-  - *Liveness Gate:* MediaPipe Face Landmarker Eye Aspect Ratio (EAR) blink detection.
-- **SQLite Offline Queue:** Buffers failed check-ins locally in `offline_queue.db` with exact IST timestamps and auto-syncs when network connectivity returns.
+  - *Sharpness Gate:* Laplacian variance blur filter ($var \ge 110.0$) (`"Hold still - image blurry"`).
+  - *Liveness & Pose Gate:* MediaPipe Face Landmarker Eye Aspect Ratio (EAR) blink detection and head pose symmetry.
+- **SQLite Offline Queue:** Buffers failed check-ins locally in `offline_queue.db` with exact original `captured_at` IST timestamps and auto-syncs when network connectivity returns.
 
-### 4. AWS Serverless Cloud Backbone
+### 6. AWS Serverless Cloud Backbone
 - **Amazon Rekognition:** Vector collection `smart-attendance-collection` (Region: `ap-south-1` Mumbai) stores indexed biometric vectors across 3–5 multi-angle enrollment photos.
 - **Amazon DynamoDB Tables:**
-  - `SmartAttendanceUsers` (Partition Key: `user_id`): Stores student registration identity, department, email, profile photos, and enrolled biometric descriptor vectors.
-  - `SmartAttendanceLogs` (Partition Key: `PK: CLASS#YYYY-MM-DD`, Sort Key: `SK: user_id`): Enforces conditional idempotent writes via `attribute_not_exists(user_id)` so repeat scans within the same session never overwrite initial attendance. Automatically computes `Present`, `Late` (based on cutoff time), or `Absent`.
+  - `SmartAttendanceUsers` (Partition Key: `user_id`): Stores student registration identity, roll number, department, email, phone, profile photos, and enrolled biometric descriptor vectors.
+  - `SmartAttendanceLogs` (Partition Key: `PK: CLASS#YYYY-MM-DD`, Sort Key: `SK: user_id`): Enforces conditional idempotent writes via `attribute_not_exists(user_id)` so repeat scans within the same session never overwrite initial attendance. Automatically computes `Present`, `Late` (based on cutoff time), or `Absent`. Dynamically synchronizes user profile updates across historical logs.
 
 ---
 
@@ -182,18 +195,19 @@ aws-face-recognition-attendance-system/
 ├── aws-backend/                    # AWS Serverless Cloud Backend (SAM)
 │   ├── template.yaml               # CloudFormation / SAM infrastructure template
 │   └── handlers/                   # Python 3.12 Serverless Lambda Handlers
-│       ├── check_in.py             # Rekognition SearchUsersByImage + DynamoDB lock
-│       ├── enroll.py               # User Vectors registration (3-5 angles)
-│       ├── get_attendance.py       # Session-partitioned query
-│       └── get_users.py            # Active student list
+│       ├── check_in.py             # Rekognition SearchUsersByImage + DynamoDB lock (IST)
+│       ├── enroll.py               # User Vectors registration (3-5 angles, 1 face gate)
+│       ├── get_attendance.py       # Session-partitioned query with dynamic metadata sync
+│       ├── get_users.py            # Active student list
+│       └── manage_user.py          # Profile update, add face angles, delete face angle
 │
 ├── scripts/
 │   ├── init_aws.py                 # One-click DynamoDB & Rekognition provisioner
 │   └── init_rekognition.py         # Rekognition collection creator
 │
-├── tests/                          # Automated Pytest Suite (20 Tests)
-│   ├── test_edge_kiosk.py          # Edge Kiosk unit & gate tests
-│   └── test_aws_backend.py         # AWS backend Lambda unit tests
+├── tests/                          # Automated Pytest Suite (30 Tests)
+│   ├── test_edge_kiosk.py          # Edge Kiosk unit, burst & quality gate tests
+│   └── test_aws_backend.py         # AWS backend Lambda & user management unit tests
 │
 ├── .env.example                    # Environment variable template
 ├── docker-compose.yml              # Production container stack
@@ -327,30 +341,40 @@ The system includes automated tests validating the biometric quality gates, blin
 ```bash
 python -m pytest tests/ -v
 ```
-**Test Results (20/20 Passed):**
+**Test Results (30/30 Passed):**
 ```
-tests/test_aws_backend.py::test_enroll_missing_fields PASSED             [  5%]
-tests/test_aws_backend.py::test_enroll_success PASSED                    [ 10%]
-tests/test_aws_backend.py::test_checkin_unauthorized_key PASSED          [ 15%]
-tests/test_aws_backend.py::test_checkin_geofence_violation PASSED        [ 20%]
-tests/test_aws_backend.py::test_checkin_unknown_face_alert PASSED        [ 25%]
-tests/test_aws_backend.py::test_checkin_success_and_duplicate_lock PASSED [ 30%]
-tests/test_aws_backend.py::test_get_attendance_query PASSED              [ 35%]
-tests/test_aws_backend.py::test_get_users PASSED                         [ 40%]
-tests/test_edge_kiosk.py::test_blur_detector_sharp_vs_blurry PASSED      [ 45%]
-tests/test_edge_kiosk.py::test_ear_calculation PASSED                    [ 50%]
-tests/test_edge_kiosk.py::test_liveness_gate_blink_accumulation PASSED   [ 55%]
-tests/test_edge_kiosk.py::test_yolo_padding_calculation PASSED           [ 60%]
-tests/test_edge_kiosk.py::test_centroid_tracker_and_cooldown PASSED      [ 65%]
-tests/test_edge_kiosk.py::test_offline_queue_enqueue_and_sync PASSED     [ 70%]
-tests/test_edge_kiosk.py::test_geofencing_inside_and_outside_radius PASSED [ 75%]
-tests/test_edge_kiosk.py::test_api_client_success PASSED                 [ 80%]
-tests/test_edge_kiosk.py::test_api_client_network_failure_enqueues_offline PASSED [ 85%]
-tests/test_edge_kiosk.py::test_exposure_gate_dark_normal_bright PASSED   [ 90%]
-tests/test_edge_kiosk.py::test_min_face_size_gate PASSED                 [ 95%]
-tests/test_edge_kiosk.py::test_camera_auto_discovery_fallback PASSED     [100%]
+tests/test_aws_backend.py::test_enroll_missing_fields PASSED                      [  3%]
+tests/test_aws_backend.py::test_enroll_success PASSED                             [  6%]
+tests/test_aws_backend.py::test_checkin_unauthorized_key PASSED                   [ 10%]
+tests/test_aws_backend.py::test_checkin_geofence_violation PASSED                 [ 13%]
+tests/test_aws_backend.py::test_checkin_unknown_face_alert PASSED                 [ 16%]
+tests/test_aws_backend.py::test_checkin_success_and_duplicate_lock PASSED          [ 20%]
+tests/test_aws_backend.py::test_get_attendance_query PASSED                       [ 23%]
+tests/test_aws_backend.py::test_get_users PASSED                                  [ 26%]
+tests/test_aws_backend.py::test_update_user_profile PASSED                         [ 30%]
+tests/test_aws_backend.py::test_add_face_angle PASSED                             [ 33%]
+tests/test_aws_backend.py::test_remove_face_safeguard PASSED                       [ 36%]
+tests/test_aws_backend.py::test_remove_face_success PASSED                         [ 40%]
+tests/test_aws_backend.py::test_checkin_timestamp_sync_ist PASSED                  [ 43%]
+tests/test_aws_backend.py::test_attendance_dynamic_metadata_sync PASSED           [ 46%]
+tests/test_edge_kiosk.py::test_blur_detector_sharp_vs_blurry PASSED               [ 50%]
+tests/test_edge_kiosk.py::test_ear_calculation PASSED                             [ 53%]
+tests/test_edge_kiosk.py::test_liveness_gate_blink_accumulation PASSED            [ 56%]
+tests/test_edge_kiosk.py::test_yolo_padding_calculation PASSED                    [ 60%]
+tests/test_edge_kiosk.py::test_centroid_tracker_and_cooldown PASSED               [ 63%]
+tests/test_edge_kiosk.py::test_offline_queue_enqueue_and_sync PASSED              [ 66%]
+tests/test_edge_kiosk.py::test_geofencing_inside_and_outside_radius PASSED          [ 70%]
+tests/test_edge_kiosk.py::test_api_client_success PASSED                          [ 73%]
+tests/test_edge_kiosk.py::test_api_client_network_failure_enqueues_offline PASSED  [ 76%]
+tests/test_edge_kiosk.py::test_exposure_gate_dark_normal_bright PASSED            [ 80%]
+tests/test_edge_kiosk.py::test_min_face_size_gate PASSED                          [ 83%]
+tests/test_edge_kiosk.py::test_camera_auto_discovery_fallback PASSED              [ 86%]
+tests/test_edge_kiosk.py::test_clahe_enhancement_low_light PASSED                 [ 90%]
+tests/test_edge_kiosk.py::test_burst_buffer_and_best_crop_selection PASSED        [ 93%]
+tests/test_edge_kiosk.py::test_head_pose_symmetry_gate PASSED                     [ 96%]
+tests/test_edge_kiosk.py::test_offline_queue_preserves_captured_at PASSED         [100%]
 
-======================== 20 passed in 5.20s ========================
+======================== 30 passed in 5.48s ========================
 ```
 
 ### Validate Production Web Build:

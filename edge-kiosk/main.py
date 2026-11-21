@@ -5,6 +5,7 @@ centroid tracking with cooldown, and direct API submission with offline bufferin
 """
 
 import argparse
+from datetime import datetime, timezone, timedelta
 import logging
 import signal
 import sys
@@ -14,10 +15,10 @@ import cv2
 from camera import LogitechWebcam, list_connected_cameras
 from client import AttendanceApiClient
 from config import config
-from detector import YOLOFaceDetector
+from detector import YOLOFaceDetector, enhance_low_light_clahe, score_face_crop
 from geofence import is_inside_campus
 from liveness import LivenessGate, is_sharp_frame, check_exposure, is_min_face_size
-from offline_queue import BackgroundSyncWorker, OfflineQueue
+from offline_queue import BackgroundSyncWorker, OfflineQueue, get_current_ist_timestamp
 from tracker import CentroidTracker
 
 logging.basicConfig(
@@ -40,6 +41,9 @@ class EdgeKioskApp:
         self.sync_worker = BackgroundSyncWorker(
             queue=self.queue, sync_fn=self.client.sync_queued_record
         )
+        self.last_verified_banner = ""
+        self.last_verified_time = 0.0
+        self.last_verified_color = (0, 255, 0)
 
     def start(self) -> None:
         self.running = True
@@ -72,7 +76,7 @@ class EdgeKioskApp:
     def process_frame(self, frame) -> None:
         h, w = frame.shape[:2]
 
-        # 1. Detect all faces in frame with YOLOv8n-face
+        # 1. Detect all faces in frame with YOLOv8n-face (with 25%-30% margin)
         faces = self.detector.detect_faces(frame)
         rects = [face.padded_bbox for face in faces]
 
@@ -111,50 +115,109 @@ class EdgeKioskApp:
                     status_text = f"Cooldown ({rem}s)"
                 else:
                     # 4. Minimum Face Size Gate (reject distant/pixelated crops)
-                    if not is_min_face_size(fw, fh):
+                    if not is_min_face_size(fw, fh, min_size=config.min_face_size):
                         color = (0, 0, 255)
                         status_text = "Move closer - face too small"
+                        track.clear_burst()
                     else:
                         # 5. Exposure Quality Gate (reject washed out or pitch dark frames)
-                        valid_exp, brightness = check_exposure(face.crop)
+                        valid_exp, brightness = check_exposure(
+                            face.crop, min_val=config.min_exposure, max_val=config.max_exposure
+                        )
                         if not valid_exp:
                             color = (0, 0, 255)
                             status_text = f"Exposure bad ({int(brightness)})"
+                            track.clear_burst()
                         else:
-                            # 6. Sharpness Gate (Laplacian blur filter >= 100.0)
-                            is_sharp, variance = is_sharp_frame(face.crop)
+                            # 6. Sharpness Gate (Laplacian blur filter >= 110.0)
+                            is_sharp, variance = is_sharp_frame(
+                                face.crop, threshold=config.blur_threshold
+                            )
                             if not is_sharp:
                                 color = (0, 0, 255)
                                 status_text = "Hold still - image blurry"
+                                track.clear_burst()
                             else:
-                                # 7. Live Presence Gate (MediaPipe blink detection)
-                                is_live, ear, blinks = self.liveness.process_frame(face.crop)
-                                if not is_live:
-                                    color = (0, 200, 255)
-                                    status_text = f"Blink check ({blinks}/{config.required_blinks})"
+                                # 7. Head Pose / Symmetry Gate
+                                pose_ok, pose_msg = self.liveness.check_head_pose(face.crop)
+                                if not pose_ok:
+                                    color = (0, 165, 255)
+                                    status_text = pose_msg
+                                    track.clear_burst()
                                 else:
-                                    # 8. Geo-fencing validation
-                                    inside, dist = is_inside_campus(
-                                        config.vit_latitude, config.vit_longitude
-                                    )
-                                    if config.geofence_enabled and not inside:
-                                        color = (0, 0, 255)
-                                        status_text = "Outside Campus"
+                                    # 8. Live Presence Gate (MediaPipe blink detection)
+                                    is_live, ear, blinks = self.liveness.process_frame(face.crop)
+                                    if not is_live:
+                                        color = (0, 200, 255)
+                                        status_text = f"Blink check ({blinks}/{config.required_blinks})"
                                     else:
-                                        # 9. Direct check-in to AWS API Gateway
-                                        result = self.client.check_in_image(face.crop)
-                                        track.mark_checked_in()
-                                        self.liveness.reset()
+                                        # 9. Adaptive Low-Light Enhancement & Burst Candidate Buffering
+                                        enhanced_crop = enhance_low_light_clahe(
+                                            face.crop,
+                                            brightness_threshold=config.clahe_brightness_threshold,
+                                            clip_limit=config.clahe_clip_limit,
+                                        )
+                                        track.add_burst_candidate(
+                                            crop=enhanced_crop,
+                                            sharpness=variance,
+                                            confidence=face.confidence,
+                                        )
 
-                                        if result.get("status") in ("PRESENT", "LATE", "SUCCESS"):
-                                            color = (0, 255, 0)
-                                            status_text = f"Verified: {result.get('name', 'Student')}"
-                                        elif result.get("status") == "OFFLINE_QUEUED":
-                                            color = (255, 255, 0)
-                                            status_text = "Offline Buffered"
+                                        # Multi-frame consensus: require >= 2 consecutive valid frames
+                                        if track.consecutive_valid_frames < config.min_consecutive_valid_frames:
+                                            color = (0, 255, 255)
+                                            status_text = f"Stabilizing ({track.consecutive_valid_frames}/{config.min_consecutive_valid_frames})"
+                                        elif not track.is_burst_ready(
+                                            min_frames=config.min_consecutive_valid_frames,
+                                            target_frames=config.burst_frame_count,
+                                            max_window_sec=config.burst_window_seconds,
+                                        ):
+                                            color = (0, 255, 255)
+                                            status_text = f"Analyzing Burst ({len(track.burst_candidates)}/{config.burst_frame_count})"
                                         else:
-                                            color = (0, 0, 255)
-                                            status_text = "Unregistered face - rejected"
+                                            # 10. Best-Frame Selection from Burst Window
+                                            best_crop = track.get_best_burst_crop()
+                                            if best_crop is None:
+                                                best_crop = enhanced_crop
+
+                                            # 11. Geo-fencing validation
+                                            inside, dist = is_inside_campus(
+                                                config.vit_latitude, config.vit_longitude
+                                            )
+                                            if config.geofence_enabled and not inside:
+                                                color = (0, 0, 255)
+                                                status_text = "Outside Campus"
+                                                track.clear_burst()
+                                            else:
+                                                # 12. Direct check-in of best crop to AWS API Gateway
+                                                result = self.client.check_in_image(best_crop)
+                                                track.mark_checked_in()
+                                                self.liveness.reset()
+
+                                                res_status = result.get("status")
+                                                name = result.get("name", "Student")
+                                                conf = result.get("confidence", 95.0)
+                                                now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+                                                time_str = now_ist.strftime("%I:%M %p")
+
+                                                if res_status in ("PRESENT", "LATE", "SUCCESS", "ALREADY_MARKED"):
+                                                    color = (0, 255, 0)
+                                                    status_text = f"{res_status}: {name} ({conf}%)"
+                                                    self.last_verified_banner = f"{res_status}: {name} • {time_str} ({conf}%)"
+                                                    self.last_verified_time = time.time()
+                                                    self.last_verified_color = (0, 255, 0)
+                                                elif res_status == "OFFLINE_QUEUED":
+                                                    color = (255, 255, 0)
+                                                    status_text = "Offline Buffered"
+                                                    self.last_verified_banner = f"Offline Buffered: {name} • {time_str}"
+                                                    self.last_verified_time = time.time()
+                                                    self.last_verified_color = (255, 255, 0)
+                                                else:
+                                                    color = (0, 0, 255)
+                                                    status_text = "Unregistered face - rejected"
+                                                    self.last_verified_banner = f"Rejected: Unregistered face ({time_str})"
+                                                    self.last_verified_time = time.time()
+                                                    self.last_verified_color = (0, 0, 255)
 
             # Draw HUD bounding box and status tag
             if not self.headless:
@@ -169,8 +232,21 @@ class EdgeKioskApp:
                     2,
                 )
 
-        # Draw offline queue status on top-left of HUD
         if not self.headless:
+            # Draw live ticking clock (IST) on top-right of HUD
+            now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+            clock_text = now_ist.strftime("%d %b %Y | %I:%M:%S %p IST")
+            cv2.putText(
+                frame,
+                clock_text,
+                (max(20, w - 360), 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (240, 240, 240),
+                2,
+            )
+
+            # Draw offline queue status on top-left of HUD
             pending_count = self.queue.get_pending_count()
             queue_text = f"Offline Queue: {pending_count} pending"
             cv2.putText(
@@ -178,10 +254,24 @@ class EdgeKioskApp:
                 queue_text,
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
+                0.65,
                 (0, 255, 0) if pending_count == 0 else (0, 165, 255),
                 2,
             )
+
+            # Draw bottom confirmation banner if recent
+            if self.last_verified_banner and (time.time() - self.last_verified_time) < 4.5:
+                cv2.rectangle(frame, (20, h - 60), (w - 20, h - 18), (20, 20, 20), -1)
+                cv2.rectangle(frame, (20, h - 60), (w - 20, h - 18), self.last_verified_color, 2)
+                cv2.putText(
+                    frame,
+                    self.last_verified_banner,
+                    (35, h - 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.68,
+                    (255, 255, 255),
+                    2,
+                )
 
     def stop(self) -> None:
         self.running = False

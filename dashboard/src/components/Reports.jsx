@@ -42,9 +42,10 @@ export default function Reports() {
   function exportCSV() {
     if (filteredRecords.length === 0) return
 
-    const headers = ['User ID', 'Full Name', 'Department', 'Check-In Time', 'Status', 'Confidence Score', 'Device ID']
+    const headers = ['User ID', 'Roll Number', 'Full Name', 'Department', 'Check-In Time (IST)', 'Status', 'Confidence Score', 'Device ID']
     const rows = filteredRecords.map(r => [
       r.user_id,
+      `"${r.roll_number || ''}"`,
       `"${r.full_name || ''}"`,
       `"${r.department || ''}"`,
       r.check_in_time || '',
@@ -88,9 +89,34 @@ export default function Reports() {
     try {
       const d = new Date(isoStr)
       if (isNaN(d.getTime())) return isoStr
-      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      return new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      }).format(d)
     } catch {
       return isoStr
+    }
+  }
+
+  function formatFullTooltip(isoStr) {
+    if (!isoStr) return ''
+    try {
+      const d = new Date(isoStr)
+      if (isNaN(d.getTime())) return ''
+      return new Intl.DateTimeFormat('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      }).format(d) + ' IST'
+    } catch {
+      return ''
     }
   }
 
