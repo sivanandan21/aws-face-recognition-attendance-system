@@ -55,7 +55,7 @@ pipeline {
             steps {
                 sh '''
                     echo "=== Reloading Production PM2 Daemon ==="
-                    pm2 restart attendance-dashboard || true
+                    sudo -u ubuntu PM2_HOME=/home/ubuntu/.pm2 pm2 restart attendance-dashboard || pm2 restart attendance-dashboard || true
                 '''
             }
         }
