@@ -12,6 +12,14 @@ import base64
 import json
 import os
 import sys
+
+# Set dummy AWS credentials before any boto3 import to ensure hermetic tests
+os.environ.setdefault("AWS_ACCESS_KEY_ID", "testing")
+os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "testing")
+os.environ.setdefault("AWS_SECURITY_TOKEN", "testing")
+os.environ.setdefault("AWS_SESSION_TOKEN", "testing")
+os.environ.setdefault("AWS_DEFAULT_REGION", "ap-south-1")
+
 from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 import pytest
@@ -55,11 +63,15 @@ def test_enroll_success():
     }
 
     with patch.object(enroll.rekognition, "create_user") as mock_create_user, \
+         patch.object(enroll.rekognition, "detect_faces") as mock_detect_faces, \
+         patch.object(enroll.rekognition, "search_users_by_image") as mock_search_users, \
          patch.object(enroll.rekognition, "index_faces") as mock_index_faces, \
          patch.object(enroll.rekognition, "associate_faces") as mock_assoc_faces, \
          patch.object(enroll.dynamodb, "Table") as mock_table, \
          patch.object(enroll.s3, "put_object"):
 
+        mock_detect_faces.return_value = {"FaceDetails": [{"BoundingBox": {}}]}
+        mock_search_users.return_value = {"UserMatches": []}
         mock_index_faces.return_value = {
             "FaceRecords": [{"Face": {"FaceId": "face-uuid-1"}}]
         }
@@ -351,10 +363,14 @@ def test_add_faces_handler():
             "face_ids": ["fid-1", "fid-2"],
         }
     }
-    with patch.object(manage_user.rekognition, "index_faces") as mock_index, \
+    with patch.object(manage_user.rekognition, "detect_faces") as mock_detect, \
+         patch.object(manage_user.rekognition, "search_users_by_image") as mock_search, \
+         patch.object(manage_user.rekognition, "index_faces") as mock_index, \
          patch.object(manage_user.rekognition, "associate_faces") as mock_assoc, \
          patch.object(manage_user.dynamodb, "Table", return_value=mock_table):
 
+        mock_detect.return_value = {"FaceDetails": [{"BoundingBox": {}}]}
+        mock_search.return_value = {"UserMatches": []}
         mock_index.return_value = {"FaceRecords": [{"Face": {"FaceId": "fid-2"}}]}
 
         resp = manage_user.add_faces_handler(event, None)

@@ -4,6 +4,9 @@ pipeline {
     environment {
         CI = 'true'
         PATH = "/usr/bin:/usr/local/bin:$PATH"
+        AWS_ACCESS_KEY_ID = 'testing'
+        AWS_SECRET_ACCESS_KEY = 'testing'
+        AWS_DEFAULT_REGION = 'ap-south-1'
     }
 
     stages {
