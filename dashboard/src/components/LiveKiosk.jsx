@@ -298,7 +298,7 @@ export default function LiveKiosk({ onScanSuccess }) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-5 sm:pb-6 border-b border-[#E6E4DD] gap-3 sm:gap-4">
         <div>
           <h1 className="font-serif font-bold text-2xl sm:text-[34px] leading-tight tracking-[-0.02em] text-[#141413]">
-            Networkz System
+            Networkz System MewjInfo
           </h1>
           <p className="text-xs sm:text-sm text-[#5C5A55] mt-1">
             Simultaneous multi-person recognition &bull; Align within frame for instant verification
