@@ -5,10 +5,19 @@ import LiveKiosk from './components/LiveKiosk'
 import Enrollment from './components/Enrollment'
 import Settings from './components/Settings'
 import Reports from './components/Reports'
+import { loadModels } from './services/faceMatcher'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview')
   const [istTime, setIstTime] = useState('')
+
+  useEffect(() => {
+    // Pre-warm face recognition models in background so Live Kiosk starts detecting immediately
+    const timer = setTimeout(() => {
+      loadModels().catch(() => {})
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     function updateClock() {

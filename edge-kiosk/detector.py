@@ -297,8 +297,18 @@ class VexdetFaceDetector:
         if self.predictor is not None:
             # Strict BGR-to-RGB conversion required by VEXDET / RF-DETR
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            raw_dets = self.predictor.predict(frame_rgb, threshold=self.conf_threshold)
+            infer_scale = 1.0
+            infer_img = frame_rgb
+            max_dim = max(frame_h, frame_w)
+            if not self.enable_tiling and max_dim > 640:
+                infer_scale = 640.0 / float(max_dim)
+                infer_w = max(128, int(round(frame_w * infer_scale)))
+                infer_h = max(128, int(round(frame_h * infer_scale)))
+                infer_img = cv2.resize(frame_rgb, (infer_w, infer_h), interpolation=cv2.INTER_LINEAR)
+
+            raw_dets = self.predictor.predict(infer_img, threshold=self.conf_threshold)
             records = unpack_detections(raw_dets)
+            inv_scale = 1.0 / infer_scale
 
             for rec in records:
                 conf = float(rec.get("confidence", 0.0))
@@ -310,10 +320,10 @@ class VexdetFaceDetector:
                     continue
 
                 box = rec.get("box_xyxy", [0, 0, 0, 0])
-                bx1 = int(max(0, min(frame_w, round(box[0]))))
-                by1 = int(max(0, min(frame_h, round(box[1]))))
-                bx2 = int(max(0, min(frame_w, round(box[2]))))
-                by2 = int(max(0, min(frame_h, round(box[3]))))
+                bx1 = int(max(0, min(frame_w, round(box[0] * inv_scale))))
+                by1 = int(max(0, min(frame_h, round(box[1] * inv_scale))))
+                bx2 = int(max(0, min(frame_w, round(box[2] * inv_scale))))
+                by2 = int(max(0, min(frame_h, round(box[3] * inv_scale))))
                 bw = bx2 - bx1
                 bh = by2 - by1
                 if bw <= 0 or bh <= 0:

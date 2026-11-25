@@ -1,7 +1,7 @@
 /**
- * High-Accuracy Multi-Person Face Matcher Engine
- * Powered by face-api.js (SSD MobileNet V1 + 68 Landmarks + ResNet 128D Descriptors)
- * Supports simultaneous multi-person detection, labeled descriptors, and sub-second caching.
+ * High-Accuracy Low-Latency Multi-Person Face Matcher Engine
+ * Powered by face-api.js (TinyFaceDetector + SSD MobileNet V1 + 68 Landmarks + ResNet 128D)
+ * Uses downscaled offscreen detection canvases and pre-built cached matchers to eliminate UI lag.
  */
 
 import * as faceapi from 'face-api.js'
@@ -10,23 +10,50 @@ let modelsLoaded = false
 let modelsLoading = false
 let modelsLoadFailed = false
 let modelsReadyPromise = null
+let ssdLoaded = false
+let ssdPromise = null
 
-// Strict Euclidean distance threshold:
-// 0.42 strictly differentiates distinct individuals and eliminates cross-matching between friends/classmates
-export const STRICT_DISTANCE_THRESHOLD = 0.42
+// Balanced Euclidean threshold for live USB webcams (protected by ambiguity margin rule)
+export const STRICT_DISTANCE_THRESHOLD = 0.54
+export const AMBIGUITY_MARGIN = 0.04
 
 // Memory cache for enrolled users' pre-computed descriptors
-const descriptorCache = new Map() // user_id -> LabeledFaceDescriptors
+const descriptorCache = new Map() // user_id -> { sig: string, labeled: LabeledFaceDescriptors }
+let cachedMatcher = null
+let cachedMatcherKey = ''
+let cachedLabeledList = []
+let matcherBuildPromise = null
+let matcherBuildKey = ''
+
+// Reusable offscreen canvas for fast downscaled live detection
+let scratchCanvas = null
+let scratchCtx = null
+let idleScanCounter = 0
+
+function getUserSignature(user) {
+  const count = Array.isArray(user.images) ? user.images.length : 0
+  const firstHead = count > 0 && typeof user.images[0] === 'string' ? user.images[0].slice(0, 24) : ''
+  return `${user.user_id}:${count}:${firstHead}:${user.updated_at || ''}`
+}
 
 function loadCachedDescriptors() {
   try {
     const raw = localStorage.getItem('smart_attendance_face_descriptors')
     if (!raw) return
     const parsed = JSON.parse(raw)
-    Object.entries(parsed).forEach(([uid, arr]) => {
-      if (Array.isArray(arr) && arr.length > 0 && !descriptorCache.has(uid)) {
-        const floatArrays = arr.map(a => new Float32Array(a))
-        descriptorCache.set(uid, new faceapi.LabeledFaceDescriptors(uid, floatArrays))
+    Object.entries(parsed).forEach(([uid, entry]) => {
+      if (Array.isArray(entry) && entry.length > 0 && !descriptorCache.has(uid)) {
+        const floatArrays = entry.map(a => new Float32Array(a))
+        descriptorCache.set(uid, {
+          sig: '',
+          labeled: new faceapi.LabeledFaceDescriptors(uid, floatArrays)
+        })
+      } else if (entry && Array.isArray(entry.descriptors) && entry.descriptors.length > 0 && !descriptorCache.has(uid)) {
+        const floatArrays = entry.descriptors.map(a => new Float32Array(a))
+        descriptorCache.set(uid, {
+          sig: entry.sig || '',
+          labeled: new faceapi.LabeledFaceDescriptors(uid, floatArrays)
+        })
       }
     })
   } catch (e) {
@@ -38,16 +65,19 @@ function saveCachedDescriptors() {
   try {
     const obj = {}
     descriptorCache.forEach((val, uid) => {
-      obj[uid] = val.descriptors.map(d => Array.from(d))
+      obj[uid] = {
+        sig: val.sig,
+        descriptors: val.labeled.descriptors.map(d => Array.from(d))
+      }
     })
     localStorage.setItem('smart_attendance_face_descriptors', JSON.stringify(obj))
-  } catch (e) {
+  } catch {
     // ignore quota issues
   }
 }
 
 /**
- * Load face-api.js models from /models.
+ * Load face-api.js models from /models (idempotent, shares single promise).
  */
 export async function loadModels() {
   if (modelsLoaded) return true
@@ -58,21 +88,36 @@ export async function loadModels() {
   return modelsReadyPromise
 }
 
+function loadSsdModelInBackground() {
+  if (ssdLoaded) return Promise.resolve(true)
+  if (ssdPromise) return ssdPromise
+  ssdPromise = faceapi.nets.ssdMobilenetv1
+    .loadFromUri('/models')
+    .then(() => {
+      ssdLoaded = true
+      return true
+    })
+    .catch(() => false)
+  return ssdPromise
+}
+
 async function _doLoadModels() {
   try {
     const MODEL_URL = '/models'
+    // Load lightweight live-kiosk models first for near-instant camera detection startup
     await Promise.all([
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
       faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
     ])
     modelsLoaded = true
     modelsLoadFailed = false
-    console.log('[faceMatcher] All face-api models loaded (SSD + Tiny + 68-Landmark + ResNet)')
+    // Pre-warm SSD MobileNet in the background for fallback & enrollment extraction
+    loadSsdModelInBackground()
+    console.log('[faceMatcher] Core live detection models loaded')
     return true
   } catch (err) {
-    console.warn('[faceMatcher] Model loading failed, falling back:', err)
+    console.warn('[faceMatcher] Model loading failed:', err)
     modelsLoadFailed = true
     modelsLoaded = false
     return false
@@ -108,13 +153,14 @@ export async function extractFaceDescriptor(imageSource) {
   }
 
   try {
-    // 1. Try SSD MobileNet with high precision
-    let detection = await faceapi
-      .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.30 }))
-      .withFaceLandmarks()
-      .withFaceDescriptor()
+    let detection = null
+    if (ssdLoaded || await loadSsdModelInBackground()) {
+      detection = await faceapi
+        .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.30 }))
+        .withFaceLandmarks()
+        .withFaceDescriptor()
+    }
 
-    // 2. If missed, try TinyFaceDetector
     if (!detection) {
       detection = await faceapi
         .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.20 }))
@@ -122,10 +168,7 @@ export async function extractFaceDescriptor(imageSource) {
         .withFaceDescriptor()
     }
 
-    if (detection) {
-      return detection.descriptor
-    }
-    return null
+    return detection ? detection.descriptor : null
   } catch (err) {
     console.warn('[faceMatcher] Error extracting descriptor:', err)
     return null
@@ -133,82 +176,181 @@ export async function extractFaceDescriptor(imageSource) {
 }
 
 /**
- * Pre-computes and caches LabeledFaceDescriptors for enrolled users.
+ * Pre-computes and memoizes FaceMatcher for enrolled users so live video frames never stall.
  */
 export async function buildFaceMatcher(enrolledUsers, distanceThreshold = STRICT_DISTANCE_THRESHOLD) {
   await loadModels()
   if (!modelsLoaded || modelsLoadFailed) return null
 
-  loadCachedDescriptors()
-  const labeledDescriptors = []
-  let newDescriptorsAdded = false
+  const usersList = (enrolledUsers || []).filter(u => u && u.active !== false && u.images && u.images.length > 0)
+  const key = `${distanceThreshold}:${usersList.map(getUserSignature).join('|')}`
 
-  for (const user of enrolledUsers || []) {
-    if (!user.images || user.images.length === 0) continue
+  if (cachedMatcher && cachedMatcherKey === key) {
+    return cachedMatcher
+  }
+  if (matcherBuildPromise && matcherBuildKey === key) {
+    return matcherBuildPromise
+  }
 
-    const cached = descriptorCache.get(user.user_id)
-    if (cached && cached.descriptors.length > 0) {
-      labeledDescriptors.push(cached)
-      continue
-    }
+  matcherBuildKey = key
+  matcherBuildPromise = (async () => {
+    loadCachedDescriptors()
+    const labeledDescriptors = []
+    let newDescriptorsAdded = false
 
-    const descriptors = []
-    for (const b64 of user.images) {
-      const desc = await extractFaceDescriptor(b64)
-      if (desc) {
-        descriptors.push(desc)
+    for (const user of usersList) {
+      const sig = getUserSignature(user)
+      const cached = descriptorCache.get(user.user_id)
+      if (cached && cached.labeled.descriptors.length > 0 && (!cached.sig || cached.sig === sig)) {
+        if (!cached.sig) {
+          cached.sig = sig
+          newDescriptorsAdded = true
+        }
+        labeledDescriptors.push(cached.labeled)
+        continue
+      }
+
+      const descriptors = []
+      for (const b64 of user.images) {
+        const desc = await extractFaceDescriptor(b64)
+        if (desc) {
+          descriptors.push(desc)
+        }
+      }
+
+      if (descriptors.length > 0) {
+        const labeled = new faceapi.LabeledFaceDescriptors(user.user_id, descriptors)
+        descriptorCache.set(user.user_id, { sig, labeled })
+        labeledDescriptors.push(labeled)
+        newDescriptorsAdded = true
       }
     }
 
-    if (descriptors.length > 0) {
-      const labeled = new faceapi.LabeledFaceDescriptors(user.user_id, descriptors)
-      descriptorCache.set(user.user_id, labeled)
-      labeledDescriptors.push(labeled)
-      newDescriptorsAdded = true
+    if (newDescriptorsAdded) {
+      saveCachedDescriptors()
     }
-  }
 
-  if (newDescriptorsAdded) {
-    saveCachedDescriptors()
-  }
+    cachedLabeledList = labeledDescriptors
+    cachedMatcher = labeledDescriptors.length > 0
+      ? new faceapi.FaceMatcher(labeledDescriptors, distanceThreshold)
+      : null
+    cachedMatcherKey = key
+    return cachedMatcher
+  })().finally(() => {
+    if (matcherBuildKey === key) {
+      matcherBuildPromise = null
+    }
+  })
 
-  if (labeledDescriptors.length === 0) return null
-
-  return new faceapi.FaceMatcher(labeledDescriptors, distanceThreshold)
+  return matcherBuildPromise
 }
 
 /**
- * Simultaneous Multi-Person Live Face Detection and Matching.
- * Detects ALL faces in frame, aligns them with landmarks, and matches each simultaneously.
- *
- * @param {HTMLVideoElement|HTMLCanvasElement|HTMLImageElement} videoElement
- * @param {Array} enrolledUsers
- * @param {number} threshold (Euclidean distance threshold; strict 0.44 prevents false positives)
- * @returns {Promise<Array>} Array of detected face match results
+ * Find best user match while enforcing ambiguity margin against runner-up students.
+ */
+function findMatchWithAmbiguityGuard(descriptor, labeledList, threshold) {
+  if (!labeledList || labeledList.length === 0) {
+    return { matched: false, label: 'unknown', distance: 1.0, ambiguous: false }
+  }
+
+  const perUserBest = []
+  for (const entry of labeledList) {
+    let minDist = Infinity
+    for (const refDesc of entry.descriptors) {
+      const dist = faceapi.euclideanDistance(descriptor, refDesc)
+      if (dist < minDist) minDist = dist
+    }
+    perUserBest.push({ label: entry.label, distance: minDist })
+  }
+
+  perUserBest.sort((a, b) => a.distance - b.distance)
+  const top = perUserBest[0]
+  if (!top || top.distance > threshold) {
+    return { matched: false, label: 'unknown', distance: top ? top.distance : 1.0, ambiguous: false }
+  }
+
+  if (perUserBest.length > 1) {
+    const runnerUp = perUserBest[1]
+    if (runnerUp.distance <= threshold + AMBIGUITY_MARGIN && (runnerUp.distance - top.distance) < AMBIGUITY_MARGIN) {
+      return { matched: false, label: 'unknown', distance: top.distance, ambiguous: true }
+    }
+  }
+
+  return { matched: true, label: top.label, distance: top.distance, ambiguous: false }
+}
+
+/**
+ * Grab a downscaled snapshot of the live video frame so TensorFlow.js never stalls the main UI thread.
+ */
+function captureDownscaledInput(videoElement, maxWidth = 480) {
+  const vw = videoElement.videoWidth
+  const vh = videoElement.videoHeight
+  if (!vw || !vh) return null
+
+  const scale = vw > maxWidth ? (maxWidth / vw) : 1
+  const dw = Math.max(160, Math.round(vw * scale))
+  const dh = Math.max(120, Math.round(vh * scale))
+
+  if (!scratchCanvas) {
+    scratchCanvas = document.createElement('canvas')
+    scratchCtx = scratchCanvas.getContext('2d', { willReadFrequently: false })
+  }
+  if (scratchCanvas.width !== dw || scratchCanvas.height !== dh) {
+    scratchCanvas.width = dw
+    scratchCanvas.height = dh
+  }
+  scratchCtx.drawImage(videoElement, 0, 0, dw, dh)
+
+  return {
+    inputCanvas: scratchCanvas,
+    scaleX: vw / dw,
+    scaleY: vh / dh,
+  }
+}
+
+/**
+ * Fast Simultaneous Multi-Person Live Face Detection and Matching.
+ * Always detects faces visually (even before users finish enrolling) and runs non-blocking on a downscaled canvas.
  */
 export async function detectAndMatchAllFaces(videoElement, enrolledUsers, threshold = STRICT_DISTANCE_THRESHOLD) {
-  if (!videoElement || videoElement.videoWidth === 0) return []
+  if (!videoElement || videoElement.readyState < 2 || videoElement.videoWidth === 0) return []
 
-  await loadModels()
-  const faceMatcher = await buildFaceMatcher(enrolledUsers, threshold)
-
-  if (!modelsLoaded || modelsLoadFailed || !faceMatcher) {
+  if (!modelsLoaded) {
+    await loadModels()
+  }
+  if (!modelsLoaded || modelsLoadFailed) {
     return []
   }
 
+  // Ensure matcher compiles cleanly without stalling live face box tracking on first boot
+  const usersList = (enrolledUsers || []).filter(u => u && u.active !== false && u.images && u.images.length > 0)
+  const expectedKey = `${threshold}:${usersList.map(getUserSignature).join('|')}`
+  if (usersList.length > 0 && cachedMatcherKey !== expectedKey) {
+    buildFaceMatcher(enrolledUsers, threshold).catch(() => {})
+  }
+
+  const captured = captureDownscaledInput(videoElement, 480)
+  if (!captured) return []
+  const { inputCanvas, scaleX, scaleY } = captured
+
   try {
-    // Detect ALL faces in frame simultaneously with landmarks and 128-d embeddings
+    // Fast primary detector on downscaled frame (~40-80ms)
     let detections = await faceapi
-      .detectAllFaces(videoElement, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.35 }))
+      .detectAllFaces(inputCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.30 }))
       .withFaceLandmarks()
       .withFaceDescriptors()
 
-    // Fast fallback to TinyFaceDetector if SSD found nothing (e.g. dark lighting or side angles)
+    // Periodic SSD MobileNet deep fallback only every 6th empty pass once SSD weights are ready
     if (!detections || detections.length === 0) {
-      detections = await faceapi
-        .detectAllFaces(videoElement, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.25 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors()
+      idleScanCounter += 1
+      if (ssdLoaded && idleScanCounter % 6 === 0) {
+        detections = await faceapi
+          .detectAllFaces(inputCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.35 }))
+          .withFaceLandmarks()
+          .withFaceDescriptors()
+      }
+    } else {
+      idleScanCounter = 0
     }
 
     if (!detections || detections.length === 0) {
@@ -216,33 +358,38 @@ export async function detectAndMatchAllFaces(videoElement, enrolledUsers, thresh
     }
 
     const results = []
-
     for (const detection of detections) {
-      const bestMatch = faceMatcher.findBestMatch(detection.descriptor)
-      const isMatched = bestMatch.label !== 'unknown'
-      const matchedUser = isMatched ? enrolledUsers.find(u => u.user_id === bestMatch.label) : null
+      const match = findMatchWithAmbiguityGuard(detection.descriptor, cachedLabeledList, threshold)
+      const matchedUser = match.matched ? (enrolledUsers || []).find(u => u.user_id === match.label) : null
+      const isMatched = Boolean(match.matched && matchedUser)
 
-      // High-precision confidence calculation (0-100%)
-      // Distance: 0 = 99.8%, 0.30 = 97%, 0.45 = 92%, 0.55 = 85%
       let confidence = 0
-      if (isMatched && matchedUser) {
-        const rawScore = 1 - (bestMatch.distance / threshold)
-        confidence = Math.min(99.4, Math.max(86.0, Math.round((85 + rawScore * 14) * 10) / 10))
+      if (isMatched) {
+        const rawScore = 1 - (match.distance / threshold)
+        confidence = Math.min(99.4, Math.max(86.0, Math.round((86 + rawScore * 13) * 10) / 10))
       } else {
-        confidence = Math.max(10, Math.round((1 - Math.min(1.0, bestMatch.distance)) * 60))
+        confidence = Math.max(10, Math.round((1 - Math.min(1.0, match.distance)) * 60))
       }
 
+      const rawBox = detection.detection.box
+      const isWarmingMatcher = Boolean(matcherBuildPromise)
       results.push({
-        box: detection.detection.box,
+        box: {
+          x: rawBox.x * scaleX,
+          y: rawBox.y * scaleY,
+          width: rawBox.width * scaleX,
+          height: rawBox.height * scaleY,
+        },
         landmarks: detection.landmarks,
         matched: isMatched,
+        ambiguous: match.ambiguous || (!isMatched && isWarmingMatcher),
         user: matchedUser,
-        user_id: isMatched && matchedUser ? matchedUser.user_id : 'UNKNOWN',
-        distance: bestMatch.distance,
+        user_id: isMatched ? matchedUser.user_id : 'UNKNOWN',
+        distance: match.distance,
         confidence,
-        message: isMatched && matchedUser
+        message: isMatched
           ? `Verified: ${matchedUser.full_name} (${confidence}%)`
-          : 'Unrecognized Face'
+          : (isWarmingMatcher ? 'Identifying...' : (match.ambiguous ? 'Hold Still (Clarifying)' : 'Unknown Face'))
       })
     }
 

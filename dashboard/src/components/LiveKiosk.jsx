@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { checkInStudent, fetchUsers, fetchAttendance, removeAttendanceRecord } from '../services/api'
-import { detectAndMatchAllFaces, loadModels } from '../services/faceMatcher'
+import { buildFaceMatcher, detectAndMatchAllFaces, getModelStatus, loadModels, STRICT_DISTANCE_THRESHOLD } from '../services/faceMatcher'
 
 export default function LiveKiosk({ onScanSuccess }) {
   const [cameraActive, setCameraActive] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+  const [modelsReady, setModelsReady] = useState(false)
   const [availableCameras, setAvailableCameras] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState(localStorage.getItem('kiosk_selected_camera') || '')
   const [selectedCameraName, setSelectedCameraName] = useState(localStorage.getItem('kiosk_selected_camera_name') || 'Logi C270 HD Webcam')
@@ -18,18 +19,45 @@ export default function LiveKiosk({ onScanSuccess }) {
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
   const scanLoopTimer = useRef(null)
+  const scanActiveRef = useRef(false)
+  const isScanningRef = useRef(false)
+  const enrolledUsersRef = useRef([])
   const cooldownMap = useRef(new Map())
   const burstMap = useRef(new Map()) // user_id -> { count: number, firstSeen: number }
 
   useEffect(() => {
+    enrolledUsersRef.current = enrolledUsers
+    if (enrolledUsers.length > 0 && modelsReady) {
+      buildFaceMatcher(enrolledUsers, STRICT_DISTANCE_THRESHOLD).catch(() => {})
+    }
+  }, [enrolledUsers, modelsReady])
+
+  useEffect(() => {
+    let cancelled = false
     async function init() {
-      await loadModels()
+      const modelsPromise = loadModels().then(ok => {
+        if (!cancelled) setModelsReady(Boolean(ok))
+      })
       try {
+        const istToday = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date())
+
         const [users, att] = await Promise.all([
           fetchUsers(),
-          fetchAttendance(new Date().toISOString().split('T')[0])
+          fetchAttendance(istToday),
+          modelsPromise
         ])
-        setEnrolledUsers(users || [])
+        if (cancelled) return
+        const validUsers = users || []
+        setEnrolledUsers(validUsers)
+        enrolledUsersRef.current = validUsers
+        if (validUsers.length > 0) {
+          await buildFaceMatcher(validUsers, STRICT_DISTANCE_THRESHOLD)
+        }
         if (att && att.records) {
           setRecentVerifications(att.records.filter(r => r.status === 'PRESENT' || r.status === 'LATE').slice(0, 5))
         }
@@ -38,6 +66,7 @@ export default function LiveKiosk({ onScanSuccess }) {
       }
     }
     init()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -70,11 +99,19 @@ export default function LiveKiosk({ onScanSuccess }) {
     setVideoReady(false)
     setActiveDetections([])
 
+    // Ensure AI models are loading in parallel while opening camera stream
+    loadModels().then(ok => { if (ok) setModelsReady(true) }).catch(() => {})
+
     const targetId = deviceId || selectedCameraId
     const constraints = {
       video: targetId
-        ? { deviceId: { exact: targetId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        : { width: { ideal: 1280 }, height: { ideal: 720 } },
+        ? {
+            deviceId: { exact: targetId },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 }
+          }
+        : { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
       audio: false
     }
 
@@ -83,9 +120,10 @@ export default function LiveKiosk({ onScanSuccess }) {
       streamRef.current = stream
       setCameraActive(true)
 
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoInputs = devices.filter(d => d.kind === 'videoinput')
-      setAvailableCameras(videoInputs)
+      // Update camera labels asynchronously so video stream renders without waiting
+      navigator.mediaDevices.enumerateDevices()
+        .then(devices => setAvailableCameras(devices.filter(d => d.kind === 'videoinput')))
+        .catch(() => {})
     } catch (err) {
       alert(`Cannot open camera: ${err.message}`)
       setCameraActive(false)
@@ -93,13 +131,25 @@ export default function LiveKiosk({ onScanSuccess }) {
   }
 
   useEffect(() => {
-    if (cameraActive && streamRef.current && videoRef.current) {
-      videoRef.current.srcObject = streamRef.current
-      videoRef.current.play().catch(e => console.warn(e))
+    const videoEl = videoRef.current
+    if (cameraActive && streamRef.current && videoEl) {
+      videoEl.srcObject = streamRef.current
+      const handlePlayReady = () => {
+        if (videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+          setVideoReady(true)
+        }
+      }
+      videoEl.play().then(handlePlayReady).catch(e => console.warn(e))
     }
   }, [cameraActive, selectedCameraId])
 
   function stopWebcam() {
+    scanActiveRef.current = false
+    isScanningRef.current = false
+    if (scanLoopTimer.current) {
+      clearTimeout(scanLoopTimer.current)
+      scanLoopTimer.current = null
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop())
       streamRef.current = null
@@ -110,10 +160,6 @@ export default function LiveKiosk({ onScanSuccess }) {
     setCameraActive(false)
     setVideoReady(false)
     setActiveDetections([])
-    if (scanLoopTimer.current) {
-      clearInterval(scanLoopTimer.current)
-      scanLoopTimer.current = null
-    }
   }
 
   useEffect(() => {
@@ -121,125 +167,155 @@ export default function LiveKiosk({ onScanSuccess }) {
   }, [])
 
   useEffect(() => {
-    if (cameraActive && videoReady) {
-      scanLoopTimer.current = setInterval(() => {
-        runMultiPersonRecognition()
-      }, 500)
-    } else {
+    if (!cameraActive || !videoReady) {
+      scanActiveRef.current = false
       if (scanLoopTimer.current) {
-        clearInterval(scanLoopTimer.current)
+        clearTimeout(scanLoopTimer.current)
+        scanLoopTimer.current = null
+      }
+      return
+    }
+
+    let effectCancelled = false
+    scanActiveRef.current = true
+
+    // Serialized non-overlapping loop starts detection IMMEDIATELY on frame 0 without piling up main-thread work
+    const scheduleNext = async () => {
+      if (effectCancelled || !scanActiveRef.current) return
+      await runMultiPersonRecognition()
+      if (!effectCancelled && scanActiveRef.current) {
+        scanLoopTimer.current = setTimeout(scheduleNext, 50)
+      }
+    }
+
+    scheduleNext()
+
+    return () => {
+      effectCancelled = true
+      scanActiveRef.current = false
+      if (scanLoopTimer.current) {
+        clearTimeout(scanLoopTimer.current)
         scanLoopTimer.current = null
       }
     }
-    return () => {
-      if (scanLoopTimer.current) clearInterval(scanLoopTimer.current)
-    }
-  }, [cameraActive, videoReady, enrolledUsers])
+  }, [cameraActive, videoReady])
 
   async function runMultiPersonRecognition() {
+    if (isScanningRef.current) return
     const video = videoRef.current
     const canvas = canvasRef.current
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0 || !canvas) return
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || !canvas) return
 
-    const vw = video.videoWidth
-    const vh = video.videoHeight
-    canvas.width = vw
-    canvas.height = vh
-    const ctx = canvas.getContext('2d')
-    ctx.clearRect(0, 0, vw, vh)
+    isScanningRef.current = true
+    try {
+      const vw = video.videoWidth
+      const vh = video.videoHeight
+      if (canvas.width !== vw || canvas.height !== vh) {
+        canvas.width = vw
+        canvas.height = vh
+      }
+      const ctx = canvas.getContext('2d')
 
-    // Strict 0.44 Euclidean threshold eliminates false positives and classmate misidentifications
-    const detectedFaces = await detectAndMatchAllFaces(video, enrolledUsers, 0.44)
-    setActiveDetections(detectedFaces)
+      const currentUsers = enrolledUsersRef.current
+      const detectedFaces = await detectAndMatchAllFaces(video, currentUsers, STRICT_DISTANCE_THRESHOLD)
+      if (!scanActiveRef.current) return
 
-    const now = Date.now()
+      if (!modelsReady && getModelStatus().modelsLoaded) {
+        setModelsReady(true)
+      }
 
-    for (const face of detectedFaces) {
-      const { x, y, width, height } = face.box
-      const isMatched = face.matched && face.user
+      ctx.clearRect(0, 0, vw, vh)
+      setActiveDetections(detectedFaces)
 
-      ctx.lineWidth = 3
-      ctx.strokeStyle = isMatched ? '#166534' : '#864446'
-      ctx.beginPath()
-      const radius = 8
-      ctx.moveTo(x + radius, y)
-      ctx.lineTo(x + width - radius, y)
-      ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
-      ctx.lineTo(x + width, y + height - radius)
-      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
-      ctx.lineTo(x + radius, y + height)
-      ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
-      ctx.lineTo(x, y + radius)
-      ctx.quadraticCurveTo(x, y, x + radius, y)
-      ctx.stroke()
+      const now = Date.now()
 
-      const labelText = isMatched
-        ? `${face.user.full_name} (${face.confidence}%)`
-        : 'Unknown Face'
-      ctx.font = '600 13px Inter, sans-serif'
-      const textWidth = ctx.measureText(labelText).width
+      for (const face of detectedFaces) {
+        const { x, y, width, height } = face.box
+        const isMatched = face.matched && face.user
 
-      ctx.fillStyle = isMatched ? '#166534' : '#864446'
-      ctx.fillRect(x, Math.max(0, y - 24), textWidth + 16, 24)
+        ctx.lineWidth = 3
+        ctx.strokeStyle = isMatched ? '#166534' : (face.ambiguous ? '#B58E43' : '#864446')
+        ctx.beginPath()
+        const radius = 8
+        ctx.moveTo(x + radius, y)
+        ctx.lineTo(x + width - radius, y)
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius)
+        ctx.lineTo(x + width, y + height - radius)
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height)
+        ctx.lineTo(x + radius, y + height)
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius)
+        ctx.lineTo(x, y + radius)
+        ctx.quadraticCurveTo(x, y, x + radius, y)
+        ctx.stroke()
 
-      ctx.fillStyle = '#FFFFFF'
-      ctx.fillText(labelText, x + 8, Math.max(16, y - 7))
+        const labelText = isMatched
+          ? `${face.user.full_name} (${face.confidence}%)`
+          : (face.message || 'Unknown Face')
+        ctx.font = '600 13px Inter, sans-serif'
+        const textWidth = ctx.measureText(labelText).width
 
-      if (isMatched && face.user) {
-        const uid = face.user.user_id
-        const lastCheck = cooldownMap.current.get(uid) || 0
-        const cooldownTime = 10000
+        ctx.fillStyle = isMatched ? '#166534' : (face.ambiguous ? '#B58E43' : '#864446')
+        ctx.fillRect(x, Math.max(0, y - 24), textWidth + 16, 24)
 
-        if (now - lastCheck > cooldownTime) {
-          // Multi-frame consensus check: Require at least 2 consecutive positive detections
-          // of the exact same user_id within 3.0s before triggering live attendance
-          // (prevents single-frame transient noise or friend cross-matching)
-          const burst = burstMap.current.get(uid) || { count: 0, firstSeen: now }
-          if (now - burst.firstSeen > 3000) {
-            burst.count = 0
-            burst.firstSeen = now
-          }
-          burst.count += 1
-          burstMap.current.set(uid, burst)
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillText(labelText, x + 8, Math.max(16, y - 7))
 
-          if (burst.count >= 2) {
-            burstMap.current.delete(uid)
-            cooldownMap.current.set(uid, now)
+        if (isMatched && face.user) {
+          const uid = face.user.user_id
+          const lastCheck = cooldownMap.current.get(uid) || 0
+          const cooldownTime = 10000
 
-            const timeNow = new Intl.DateTimeFormat('en-IN', {
-              timeZone: 'Asia/Kolkata',
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            }).format(new Date())
+          if (now - lastCheck > cooldownTime) {
+            const burst = burstMap.current.get(uid) || { count: 0, firstSeen: now }
+            if (now - burst.firstSeen > 4000) {
+              burst.count = 0
+              burst.firstSeen = now
+            }
+            burst.count += 1
+            burstMap.current.set(uid, burst)
 
-            checkInStudent({
-              user_id: uid,
-              name: face.user.full_name,
-              department: face.user.department,
-              confidence: face.confidence,
-              device_id: 'web-kiosk-live',
-              timestamp: new Date().toISOString()
-            })
+            if (burst.count >= 2) {
+              burstMap.current.delete(uid)
+              cooldownMap.current.set(uid, now)
 
-            setRecentVerifications(prev => [
-              {
+              const timeNow = new Intl.DateTimeFormat('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+              }).format(new Date())
+
+              checkInStudent({
                 user_id: uid,
-                full_name: face.user.full_name,
-                check_in_time: timeNow,
-                confidence_score: face.confidence,
-                status: 'PRESENT'
-              },
-              ...prev.filter(p => p.user_id !== uid)
-            ].slice(0, 8))
+                name: face.user.full_name,
+                department: face.user.department,
+                roll_number: face.user.roll_number || '',
+                confidence: face.confidence,
+                device_id: 'web-kiosk-live',
+                timestamp: new Date().toISOString()
+              })
 
-            setToastMessage(`✓ Verified & Marked Present: ${face.user.full_name}`)
-            setTimeout(() => setToastMessage(''), 3500)
+              setRecentVerifications(prev => [
+                {
+                  user_id: uid,
+                  full_name: face.user.full_name,
+                  check_in_time: timeNow,
+                  confidence_score: face.confidence,
+                  status: 'PRESENT'
+                },
+                ...prev.filter(p => p.user_id !== uid)
+              ].slice(0, 8))
 
-            if (onScanSuccess) onScanSuccess()
+              setToastMessage(`✓ Verified & Marked Present: ${face.user.full_name}`)
+              setTimeout(() => setToastMessage(''), 3500)
+
+              if (onScanSuccess) onScanSuccess()
+            }
           }
         }
       }
+    } finally {
+      isScanningRef.current = false
     }
   }
 
@@ -401,7 +477,9 @@ export default function LiveKiosk({ onScanSuccess }) {
           <div className="absolute top-3 sm:top-4 left-3 sm:left-4 z-20 bg-white/10 backdrop-blur-md px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full flex items-center gap-1.5 sm:gap-2 border border-white/10">
             <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-[#7B9478] animate-pulse' : 'bg-white/40'}`} />
             <span className="text-[11px] sm:text-xs font-medium text-white/90">
-              {cameraActive ? `Live &bull; ${activeDetections.length} Face(s)` : 'Standby'}
+              {cameraActive
+                ? (modelsReady ? `Live • ${activeDetections.length} Face(s)` : 'Live • Loading AI...')
+                : 'Standby'}
             </span>
           </div>
 
@@ -453,7 +531,14 @@ export default function LiveKiosk({ onScanSuccess }) {
                 autoPlay
                 playsInline
                 muted
-                onLoadedMetadata={() => setVideoReady(true)}
+                onLoadedMetadata={() => {
+                  if (videoRef.current && videoRef.current.videoWidth > 0 && videoRef.current.readyState >= 2) {
+                    setVideoReady(true)
+                  }
+                }}
+                onCanPlay={() => setVideoReady(true)}
+                onLoadedData={() => setVideoReady(true)}
+                onPlaying={() => setVideoReady(true)}
                 className="w-full h-full object-cover min-h-[320px] sm:min-h-[460px]"
               />
               <canvas
@@ -542,7 +627,7 @@ export default function LiveKiosk({ onScanSuccess }) {
           </div>
 
           <div className="pt-4 border-t border-[#E6E4DD] text-xs text-[#8A867E] tabular-nums mt-4 lg:mt-0">
-            Multi-Person ResNet Embeddings &bull; Threshold: 0.55
+            Multi-Person ResNet Embeddings &bull; Threshold: 0.54
           </div>
         </div>
       </div>

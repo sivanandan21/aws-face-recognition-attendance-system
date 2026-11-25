@@ -45,14 +45,21 @@ def list_connected_cameras(max_probe: int = 5) -> List[Dict]:
 
 
 def find_best_camera_index(preferred_name_filter: str = config.camera_name_filter) -> int:
-    """Auto-detect camera index, defaulting to first opened device or config.camera_index."""
+    """Auto-detect camera index cleanly, stopping on the first opened device to avoid boot lag."""
     if config.camera_source != "auto" and config.camera_source.isdigit():
         return int(config.camera_source)
 
-    cameras = list_connected_cameras()
-    if not cameras:
-        return config.camera_index
-    return cameras[0]["index"]
+    preferred_backend = LogitechWebcam.get_preferred_backend()
+    # Probe preferred default index first (0) before scanning others
+    probe_order = [config.camera_index] + [i for i in range(3) if i != config.camera_index]
+    for idx in probe_order:
+        cap = cv2.VideoCapture(idx, preferred_backend)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(idx, cv2.CAP_ANY)
+        if cap.isOpened():
+            cap.release()
+            return idx
+    return config.camera_index
 
 
 class LogitechWebcam:
@@ -112,16 +119,16 @@ class LogitechWebcam:
                 "Ensure device is connected and not locked by another process."
             )
 
-        # Buffer size 1 to ensure zero frame latency
+        # Apply MJPG FourCC FIRST so USB UVC drivers unlock 30 FPS instead of slow YUY2 fallback
+        if len(self.fourcc_str) == 4:
+            fourcc_val = cv2.VideoWriter_fourcc(*self.fourcc_str)
+            self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_val)
+
+        # Buffer size 1 to eliminate OS frame queueing latency
         try:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
-
-        # Apply MJPG FourCC codec to enable high-throughput 1080p@30fps over USB
-        if len(self.fourcc_str) == 4:
-            fourcc_val = cv2.VideoWriter_fourcc(*self.fourcc_str)
-            self.cap.set(cv2.CAP_PROP_FOURCC, fourcc_val)
 
         # Set resolution and target frame rate
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
