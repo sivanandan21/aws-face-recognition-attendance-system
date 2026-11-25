@@ -25,7 +25,7 @@ export default function Navbar({ activeTab, setActiveTab }) {
                 Live Edge
               </span>
             </h1>
-            <p className="text-xs text-slate-400">AWS Rekognition User Vectors + YOLOv8n</p>
+            <p className="text-xs text-slate-400">AWS Rekognition User Vectors + VEXDET</p>
           </div>
         </div>
 

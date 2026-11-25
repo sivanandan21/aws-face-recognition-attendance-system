@@ -23,7 +23,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from camera import LogitechWebcam, list_connected_cameras, find_best_camera_index
 from client import AttendanceApiClient
-from detector import DetectedFace, YOLOFaceDetector, enhance_low_light_clahe, score_face_crop
+from detector import (
+    DetectedFace,
+    VexdetFaceDetector,
+    YOLOFaceDetector,
+    enhance_low_light_clahe,
+    score_face_crop,
+)
 from geofence import haversine_distance_meters, is_inside_campus
 from liveness import (
     calculate_ear,
@@ -119,12 +125,13 @@ def test_liveness_gate_blink_accumulation():
 
 
 # ==========================================
-# 3. YOLO DETECTOR PADDING TESTS
+# 3. VEXDET DETECTOR & PADDING TESTS
 # ==========================================
 
-def test_yolo_padding_calculation():
-    """Verify 20% margin is added and clamped within boundaries."""
-    detector = YOLOFaceDetector(conf_threshold=0.5, padding_percent=0.20)
+def test_vexdet_padding_and_legacy_alias():
+    """Verify 20% margin clamping and backward-compatible YOLOFaceDetector alias."""
+    assert YOLOFaceDetector is VexdetFaceDetector
+    detector = VexdetFaceDetector(conf_threshold=0.5, padding_percent=0.20)
 
     # Box in center: (100, 100, 50, 50) on 640x480 frame
     # 20% of 50 = 10
@@ -138,6 +145,130 @@ def test_yolo_padding_calculation():
     px, py, pw, ph = detector.apply_padding(5, 5, 50, 50, 640, 480)
     assert px == 0
     assert py == 0
+
+
+def test_vexdet_rejects_yolo_and_validates_apache_whitelist():
+    """Verify VEXDET permits only Apache-2.0 RF-DETR architectures and blocks YOLO."""
+    for valid_arch in ("RFDETRNano", "RFDETRSmall", "RFDETRMedium", "RFDETRLarge"):
+        det = VexdetFaceDetector(model_name=valid_arch)
+        assert det.model_name == valid_arch
+
+    for disallowed in ("YOLOv8", "YOLO11", "ultralytics", "RFDETRXLarge"):
+        with pytest.raises(ValueError):
+            VexdetFaceDetector(model_name=disallowed)
+
+    with pytest.raises(ValueError):
+        VexdetFaceDetector(model_path="yolov8n-face.pt")
+
+
+def test_vexdet_detect_faces_rgb_conversion_and_filtering():
+    """Verify VexdetFaceDetector converts BGR->RGB, filters confidence, and crops faces."""
+    recorded_inputs = []
+
+    class _MockDetections:
+        xyxy = np.array([[100.0, 100.0, 200.0, 200.0], [300.0, 150.0, 360.0, 210.0]], dtype=np.float32)
+        confidence = np.array([0.92, 0.45], dtype=np.float32)
+        class_id = np.array([0, 0], dtype=np.int32)
+        data = {"class_name": ["face", "face"]}
+
+    class _MockBasePredictor:
+        def predict(self, image_rgb, threshold=0.8):
+            recorded_inputs.append(image_rgb.copy())
+            return _MockDetections()
+
+    detector = VexdetFaceDetector(
+        model_name="RFDETRSmall",
+        conf_threshold=0.80,
+        padding_percent=0.30,
+        enhanced=True,
+        enable_tiling=False,
+        enable_tta=False,
+        predictor=_MockBasePredictor(),
+    )
+
+    # Create pure blue BGR frame (B=255, G=0, R=0) with bright face patch so CLAHE preserves hue
+    frame_bgr = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame_bgr[:, :, 0] = 255
+
+    faces = detector.detect_faces(frame_bgr)
+    assert len(recorded_inputs) == 1
+    # In RGB input passed to VEXDET, Blue (channel 2) dominates Red (channel 0) even after CLAHE
+    assert recorded_inputs[0][:, :, 2].mean() > 200
+    assert recorded_inputs[0][:, :, 0].mean() < 30
+    assert recorded_inputs[0][:, :, 2].mean() > recorded_inputs[0][:, :, 0].mean() + 180
+
+    # Only 0.92 detection passes conf_threshold=0.80 (0.45 rejected)
+    assert len(faces) == 1
+    face = faces[0]
+    assert isinstance(face, DetectedFace)
+    assert face.bbox == (100, 100, 100, 100)
+    assert abs(face.confidence - 0.92) < 1e-4
+    # 30% padding around 100x100 box -> 160x160 crop
+    assert face.padded_bbox == (70, 70, 160, 160)
+    assert face.crop.shape == (160, 160, 3)
+
+
+def test_vexdet_enhanced_wbf_and_tta_fusion():
+    """Verify VexdetEnhancedPredictor TTA flip and WBF fusion produce valid face detections."""
+    class _MockTTAPredictor:
+        def predict(self, image_rgb, threshold=0.5):
+            # Face centered at x=[220, 320] on 640px wide image -> symmetric under horizontal flip
+            # Flipped coordinates of [220, 100, 320, 200] are [320, 100, 420, 200]
+            h, w = image_rgb.shape[:2]
+            if np.mean(image_rgb[:, : w // 2, 0]) > 100:
+                box = np.array([[220.0, 100.0, 320.0, 200.0]], dtype=np.float32)
+            else:
+                box = np.array([[320.0, 100.0, 420.0, 200.0]], dtype=np.float32)
+
+            class _Dets:
+                xyxy = box
+                confidence = np.array([0.90], dtype=np.float32)
+                class_id = np.array([0], dtype=np.int32)
+                data = {"class_name": ["face"]}
+
+            return _Dets()
+
+    detector = VexdetFaceDetector(
+        model_name="RFDETRNano",
+        conf_threshold=0.80,
+        padding_percent=0.25,
+        enhanced=True,
+        enable_tiling=False,
+        enable_tta=True,
+        predictor=_MockTTAPredictor(),
+    )
+
+    frame_bgr = np.zeros((480, 640, 3), dtype=np.uint8)
+    # Mark left half red (channel 2 in BGR -> channel 0 in RGB) to distinguish orientation
+    frame_bgr[:, :320, 2] = 200
+
+    faces = detector.detect_faces(frame_bgr)
+    assert len(faces) == 1
+    assert faces[0].confidence >= 0.90
+    assert faces[0].bbox == (220, 100, 100, 100)
+
+
+def test_vexdet_onnx_routing_and_cascade_fallback(tmp_path):
+    """Verify .onnx model path routes to VEXDET ONNX predictor and falls back gracefully."""
+    dummy_onnx = tmp_path / "vexdet_small.onnx"
+    dummy_onnx.write_bytes(b"fake-onnx-graph")
+
+    class _MockOnnxPred:
+        def predict(self, img, threshold=0.8):
+            return []
+
+    with patch("detector.create_onnx_predictor", return_value=_MockOnnxPred()) as mock_onnx:
+        det = VexdetFaceDetector(model_path=str(dummy_onnx))
+        mock_onnx.assert_called_once_with(str(dummy_onnx))
+        assert "ONNX" in det.runtime_mode
+        assert det.detect_faces(np.zeros((240, 320, 3), dtype=np.uint8)) == []
+
+    # Verify graceful fallback when create_model raises ImportError
+    with patch("detector.create_model", side_effect=ImportError("rfdetr unavailable")):
+        fallback_det = VexdetFaceDetector(auto_init=True)
+        assert fallback_det.predictor is None
+        assert "Fallback" in fallback_det.runtime_mode
+        assert isinstance(fallback_det.detect_faces(np.zeros((240, 320, 3), dtype=np.uint8)), list)
 
 
 # ==========================================

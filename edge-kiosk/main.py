@@ -1,6 +1,6 @@
 """
 Edge Kiosk Main Application.
-Orchestrates Logitech Webcam stream, YOLOv8n-face detection, local blur & liveness gates,
+Orchestrates Logitech Webcam stream, VEXDET (RF-DETR) detection, local blur & liveness gates,
 centroid tracking with cooldown, and direct API submission with offline buffering.
 """
 
@@ -15,7 +15,7 @@ import cv2
 from camera import LogitechWebcam, list_connected_cameras
 from client import AttendanceApiClient
 from config import config
-from detector import YOLOFaceDetector, enhance_low_light_clahe, score_face_crop
+from detector import VexdetFaceDetector, enhance_low_light_clahe, score_face_crop
 from geofence import is_inside_campus
 from liveness import LivenessGate, is_sharp_frame, check_exposure, is_min_face_size
 from offline_queue import BackgroundSyncWorker, OfflineQueue, get_current_ist_timestamp
@@ -33,7 +33,7 @@ class EdgeKioskApp:
         self.headless = headless
         self.running = False
         self.camera = LogitechWebcam()
-        self.detector = YOLOFaceDetector()
+        self.detector = VexdetFaceDetector()
         self.liveness = LivenessGate()
         self.tracker = CentroidTracker()
         self.queue = OfflineQueue()
@@ -47,8 +47,9 @@ class EdgeKioskApp:
 
     def start(self) -> None:
         self.running = True
+        self.detector.ensure_loaded()
         self.sync_worker.start()
-        logger.info("Starting Edge Kiosk application loop...")
+        logger.info(f"Starting Edge Kiosk application loop ({self.detector.runtime_mode})...")
 
         try:
             with self.camera:
@@ -76,7 +77,7 @@ class EdgeKioskApp:
     def process_frame(self, frame) -> None:
         h, w = frame.shape[:2]
 
-        # 1. Detect all faces in frame with YOLOv8n-face (with 25%-30% margin)
+        # 1. Detect all faces in frame with VEXDET (RF-DETR) engine (with 25%-30% margin)
         faces = self.detector.detect_faces(frame)
         rects = [face.padded_bbox for face in faces]
 
@@ -269,7 +270,7 @@ class EdgeKioskApp:
                 2,
             )
 
-            # Draw offline queue status on top-left of HUD
+            # Draw offline queue status and active detection engine on top-left of HUD
             pending_count = self.queue.get_pending_count()
             queue_text = f"Offline Queue: {pending_count} pending"
             cv2.putText(
@@ -280,6 +281,15 @@ class EdgeKioskApp:
                 0.65,
                 (0, 255, 0) if pending_count == 0 else (0, 165, 255),
                 2,
+            )
+            cv2.putText(
+                frame,
+                f"Engine: {self.detector.engine_label}",
+                (20, 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (240, 240, 240),
+                1,
             )
 
             # Draw bottom confirmation banner if recent

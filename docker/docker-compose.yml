@@ -1,6 +1,6 @@
 services:
   # ==========================================
-  # Edge Kiosk (Logitech USB Webcam + YOLOv8n)
+  # Edge Kiosk (Logitech USB Webcam + VEXDET RF-DETR)
   # ==========================================
   edge-kiosk:
     build:
@@ -19,6 +19,10 @@ services:
       - CAMERA_HEIGHT=1080
       - CAMERA_FPS=30
       - CAMERA_FOURCC=MJPG
+      - VEXDET_MODEL_NAME=${VEXDET_MODEL_NAME:-RFDETRSmall}
+      - VEXDET_ENHANCED=${VEXDET_ENHANCED:-true}
+      - VEXDET_ONNX_PATH=${VEXDET_ONNX_PATH:-}
+      - VEXDET_CHECKPOINT_PATH=${VEXDET_CHECKPOINT_PATH:-}
       - FACE_CONF_THRESHOLD=0.80
       - MIN_FACE_SIZE=112
       - BLUR_THRESHOLD=100.0

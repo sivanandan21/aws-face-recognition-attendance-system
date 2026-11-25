@@ -7,7 +7,7 @@
 [![AWS Region](https://img.shields.io/badge/AWS%20Region-ap--south--1%20(Mumbai)-orange.svg)](https://aws.amazon.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An enterprise-grade, edge-to-cloud Smart Biometric Attendance System featuring **simultaneous multi-person face recognition**, **Logitech USB webcam hardware optimization**, **YOLOv8n-face detection**, **MediaPipe Eye Aspect Ratio (EAR) liveness checks**, an **offline-first SQLite sync queue**, and an **AWS Serverless cloud backbone** utilizing **Amazon Rekognition User Vectors** and **DynamoDB conditional session locking**.
+An enterprise-grade, edge-to-cloud Smart Biometric Attendance System featuring **simultaneous multi-person face recognition**, **Logitech USB webcam hardware optimization**, **VEXDET (Apache-2.0 RF-DETR transformer) edge detection**, **MediaPipe Eye Aspect Ratio (EAR) liveness checks**, an **offline-first SQLite sync queue**, and an **AWS Serverless cloud backbone** utilizing **Amazon Rekognition User Vectors** and **DynamoDB conditional session locking**.
 
 Engineered with a bespoke **Ceramic & Stone architectural design system** (Newsreader Serif + Tabular Inter UI) and deployed with 24/7 uptime on AWS EC2 with automatic Let's Encrypt SSL.
 
@@ -57,8 +57,8 @@ This production-grade system has been extensively refactored, redesigned, and up
                                  │              Edge Kiosk / Web Client             │
                                  │                                                  │
 ┌──────────────────────────┐     │  ┌────────────────────┐   ┌───────────────────┐  │
-│ External Webcam / Laptop │────>│  │ Hardware Capture   │──>│ YOLOv8 / SSD      │  │
-│ 1080p / 720p @ 30 FPS    │     │  │ MJPG Low Latency   │   │ MobileNet-V1      │  │
+│ External Webcam / Laptop │────>│  │ Hardware Capture   │──>│ VEXDET (RF-DETR)  │  │
+│ 1080p / 720p @ 30 FPS    │     │  │ MJPG Low Latency   │   │ / SSD MobileNet   │  │
 └──────────────────────────┘     │  └────────────────────┘   └─────────┬─────────┘  │
                                  │                                     │            │
                                  │  ┌──────────────────────────────────▼─────────┐  │
@@ -112,7 +112,7 @@ This production-grade system has been extensively refactored, redesigned, and up
 ### 1. Multi-Person Biometric Recognition Engine & Accuracy Pipeline
 - **Multi-Frame Burst Consensus & Best-Frame Selection:** Gathers a burst window of 3–5 consecutive frames over ~0.6s per tracked face. Evaluates combined Laplacian sharpness and detection confidence to select the single sharpest, highest-quality crop for AWS Rekognition.
 - **Adaptive Lighting Preprocessing (CLAHE):** Automatically detects low-light face crops (mean L-channel < 75 in LAB color space) and applies Contrast Limited Adaptive Histogram Equalization (`clipLimit=2.0`, `tileGridSize=(8,8)`) to preserve facial geometry in dim environments.
-- **Smart 25%–30% Bounding Box Padding:** Expands raw YOLO face crops with 25% symmetric margin clamped cleanly to frame borders, ensuring Rekognition captures full facial landmarks (forehead, chin, ears, jawline).
+- **Smart 25%–30% Bounding Box Padding:** Expands raw VEXDET detection crops with symmetric margin clamped cleanly to frame borders, ensuring Rekognition captures full facial landmarks (forehead, chin, ears, jawline).
 - **Head-Pose & Quality Gates:** Rejects extreme yaw (>30°) and pitch (>20°) using landmark symmetry (`"Turn slightly toward camera"`), enforces minimum 120×120px face size and minimum 110.0 Laplacian sharpness.
 - **High-Precision 128-D Descriptors:** Pre-computes 128-dimensional biometric embeddings using deep residual neural networks (ResNet), cached in memory for sub-millisecond Euclidean distance evaluation via `faceapi.FaceMatcher`.
 - **Intelligent Cooldown Gate:** Tracks each verified student with a non-blocking 15-second cooldown cache. Students walking together are all recognized, marked present, and prevented from creating duplicate DynamoDB log spam.
@@ -182,9 +182,10 @@ aws-face-recognition-attendance-system/
 │   └── vite.config.js              # Vite bundler configuration & proxy
 │
 ├── edge-kiosk/                     # Python Edge Kiosk Application
+│   ├── vexdet/                     # Apache-2.0 VEXDET RF-DETR inference engine (WBF + TTA + CLAHE)
 │   ├── camera.py                   # Logitech webcam controller (MJPG, 1080p, 30fps)
 │   ├── config.py                   # 12-factor configuration reader
-│   ├── detector.py                 # YOLOv8n-face detector with GPU/CPU auto-fallback
+│   ├── detector.py                 # VexdetFaceDetector (RF-DETR / ONNX) with CPU/GPU auto-fallback
 │   ├── geofence.py                 # Campus perimeter validation (Haversine)
 │   ├── liveness.py                 # Laplacian blur test & MediaPipe EAR liveness
 │   ├── offline_queue.py            # SQLite offline queue & background sync worker

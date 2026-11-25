@@ -47,12 +47,12 @@ To eliminate camera buffer latency, the system implements:
 
 ---
 
-## 4. Face Detection (YOLO & OpenCV)
+## 4. Face & Subject Detection (VEXDET RF-DETR & OpenCV)
 
-![Multi-Person YOLOv8-Face Detection and Bounding Box Regression](images/04_face_detection_yolo_opencv.png)
+![Multi-Person Detection and Bounding Box Regression](images/04_face_detection_yolo_opencv.png)
 
 ### 4.1 Robust Multi-Person Bounding Box Regression
-* **Ultralytics YOLOv8n-face:** Single-stage convolutional neural network optimized for fast, accurate multi-face localization even under varied orientations and partial occlusions.
+* **VEXDET (Apache-2.0 RF-DETR Transformer Engine):** NMS-free end-to-end real-time detection transformer (`RFDETRNano` / `RFDETRSmall` / `RFDETRMedium` / `RFDETRLarge`) with native ONNX Runtime acceleration, optional 640px sliced inference, Test-Time Augmentation, and Weighted Boxes Fusion (`VexdetEnhancedPredictor`), replacing legacy AGPL YOLOv8.
 * **Adaptive 30% Symmetric Padding:** Clamped to frame bounds to capture entire facial geometry (jawline, ears, forehead).
 * **Quality Crop Gating:** Rejects crops smaller than $120 \times 120\text{ pixels}$ or below 0.80 detection confidence.
 * **Adaptive CLAHE Normalization:** Enhances the L-channel in LAB color space when mean brightness $< 75$, preserving facial geometry in dim environments.

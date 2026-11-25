@@ -198,7 +198,7 @@ export default function Settings() {
                 Face Detection Model
               </label>
               <div className="bg-[#E7E4DC]/60 border border-[#DCD9D0] rounded-lg px-3.5 py-2 text-sm text-[#5C5A55] font-medium">
-                YOLOv8n-face &bull; Local GPU
+                VEXDET (RF-DETR Small) &bull; Apache-2.0 Enhanced Engine
               </div>
             </div>
 

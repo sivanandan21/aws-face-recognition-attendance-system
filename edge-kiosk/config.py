@@ -18,7 +18,7 @@ except ImportError:
 
 @dataclass
 class EdgeConfig:
-    # Camera Settings (Logitech C920 / USB Webcam)
+    # Camera Settings (Logitech C920 / C270 USB Webcam)
     camera_source: str = os.getenv("CAMERA_SOURCE", "auto")  # "auto" or integer index as str
     camera_name_filter: str = os.getenv("CAMERA_NAME_FILTER", "Logitech")
     camera_index: int = int(os.getenv("CAMERA_INDEX", "0"))
@@ -31,8 +31,17 @@ class EdgeConfig:
         int(os.getenv("CAMERA_FOCUS_VALUE")) if os.getenv("CAMERA_FOCUS_VALUE") else None
     )
 
-    # Face Detection & Padding
-    yolo_model_path: str = os.getenv("YOLO_MODEL_PATH", "yolov8s-face.pt")
+    # Face & Subject Detection (VEXDET / RF-DETR Apache-2.0 Engine) & Padding
+    vexdet_model_name: str = os.getenv("VEXDET_MODEL_NAME", "RFDETRSmall")
+    vexdet_checkpoint_path: Optional[str] = os.getenv("VEXDET_CHECKPOINT_PATH") or None
+    vexdet_onnx_path: Optional[str] = os.getenv("VEXDET_ONNX_PATH") or None
+    vexdet_enhanced: bool = os.getenv("VEXDET_ENHANCED", "true").lower() in ("1", "true", "yes")
+    vexdet_enable_tiling: bool = os.getenv("VEXDET_ENABLE_TILING", "false").lower() in ("1", "true", "yes")
+    vexdet_enable_tta: bool = os.getenv("VEXDET_ENABLE_TTA", "false").lower() in ("1", "true", "yes")
+    vexdet_slice_size: int = int(os.getenv("VEXDET_SLICE_SIZE", "640"))
+    vexdet_overlap_ratio: float = float(os.getenv("VEXDET_OVERLAP_RATIO", "0.25"))
+    vexdet_wbf_iou_threshold: float = float(os.getenv("VEXDET_WBF_IOU_THRESHOLD", "0.55"))
+    vexdet_device: str = os.getenv("VEXDET_DEVICE", "auto")
     face_padding_percent: float = float(os.getenv("FACE_PADDING_PERCENT", "0.30"))
     face_conf_threshold: float = float(os.getenv("FACE_CONF_THRESHOLD", "0.80"))
     min_face_size: int = int(os.getenv("MIN_FACE_SIZE", "120"))
