@@ -5,18 +5,24 @@ import LiveKiosk from './components/LiveKiosk'
 import Enrollment from './components/Enrollment'
 import Settings from './components/Settings'
 import Reports from './components/Reports'
-import { loadModels } from './services/faceMatcher'
+import { fetchUsers } from './services/api'
+import { buildFaceMatcher, loadModels } from './services/faceMatcher'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('overview')
   const [istTime, setIstTime] = useState('')
 
   useEffect(() => {
-    // Pre-warm face recognition models in background so Live Kiosk starts detecting immediately
-    const timer = setTimeout(() => {
-      loadModels().catch(() => {})
-    }, 300)
-    return () => clearTimeout(timer)
+    // Pre-load models, compile TensorFlow WebGL shaders, and warm up student matcher immediately on load
+    loadModels()
+      .then(async (ok) => {
+        if (!ok) return
+        const users = await fetchUsers().catch(() => [])
+        if (Array.isArray(users) && users.length > 0) {
+          await buildFaceMatcher(users)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {

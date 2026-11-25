@@ -28,7 +28,7 @@ let matcherBuildKey = ''
 // Reusable offscreen canvas for fast downscaled live detection
 let scratchCanvas = null
 let scratchCtx = null
-let idleScanCounter = 0
+let shadersWarmedUp = false
 
 function getUserSignature(user) {
   const count = Array.isArray(user.images) ? user.images.length : 0
@@ -101,6 +101,29 @@ function loadSsdModelInBackground() {
   return ssdPromise
 }
 
+async function warmupTensorflowShaders() {
+  if (shadersWarmedUp || typeof document === 'undefined') return
+  shadersWarmedUp = true
+  try {
+    const dummy = document.createElement('canvas')
+    dummy.width = 112
+    dummy.height = 112
+    const ctx = dummy.getContext('2d')
+    if (ctx) {
+      ctx.fillStyle = '#808080'
+      ctx.fillRect(0, 0, 112, 112)
+    }
+    // Directly invoke all 3 neural nets so WebGL shaders compile before the camera turns on
+    await Promise.all([
+      faceapi.detectAllFaces(dummy, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })),
+      faceapi.detectFaceLandmarks(dummy),
+      faceapi.computeFaceDescriptor(dummy),
+    ])
+  } catch {
+    // Warmup best-effort only
+  }
+}
+
 async function _doLoadModels() {
   try {
     const MODEL_URL = '/models'
@@ -112,9 +135,11 @@ async function _doLoadModels() {
     ])
     modelsLoaded = true
     modelsLoadFailed = false
-    // Pre-warm SSD MobileNet in the background for fallback & enrollment extraction
+    // Pre-compile WebGL/CPU inference shaders before camera starts so frame 0 has zero stall
+    await warmupTensorflowShaders()
+    // Pre-warm SSD MobileNet in the background for enrollment extraction
     loadSsdModelInBackground()
-    console.log('[faceMatcher] Core live detection models loaded')
+    console.log('[faceMatcher] Core live detection models + shaders ready')
     return true
   } catch (err) {
     console.warn('[faceMatcher] Model loading failed:', err)
@@ -154,7 +179,7 @@ export async function extractFaceDescriptor(imageSource) {
 
   try {
     let detection = null
-    if (ssdLoaded || await loadSsdModelInBackground()) {
+    if (ssdLoaded) {
       detection = await faceapi
         .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.30 }))
         .withFaceLandmarks()
@@ -329,29 +354,16 @@ export async function detectAndMatchAllFaces(videoElement, enrolledUsers, thresh
     buildFaceMatcher(enrolledUsers, threshold).catch(() => {})
   }
 
-  const captured = captureDownscaledInput(videoElement, 480)
+  const captured = captureDownscaledInput(videoElement, 416)
   if (!captured) return []
   const { inputCanvas, scaleX, scaleY } = captured
 
   try {
-    // Fast primary detector on downscaled frame (~40-80ms)
-    let detections = await faceapi
-      .detectAllFaces(inputCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.30 }))
+    // Fast single-stage TinyFaceDetector on downscaled frame (zero periodic heavy SSD hitching)
+    const detections = await faceapi
+      .detectAllFaces(inputCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.30 }))
       .withFaceLandmarks()
       .withFaceDescriptors()
-
-    // Periodic SSD MobileNet deep fallback only every 6th empty pass once SSD weights are ready
-    if (!detections || detections.length === 0) {
-      idleScanCounter += 1
-      if (ssdLoaded && idleScanCounter % 6 === 0) {
-        detections = await faceapi
-          .detectAllFaces(inputCanvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.35 }))
-          .withFaceLandmarks()
-          .withFaceDescriptors()
-      }
-    } else {
-      idleScanCounter = 0
-    }
 
     if (!detections || detections.length === 0) {
       return []

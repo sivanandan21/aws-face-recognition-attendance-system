@@ -132,14 +132,27 @@ export default function LiveKiosk({ onScanSuccess }) {
 
   useEffect(() => {
     const videoEl = videoRef.current
-    if (cameraActive && streamRef.current && videoEl) {
-      videoEl.srcObject = streamRef.current
-      const handlePlayReady = () => {
-        if (videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
-          setVideoReady(true)
-        }
+    if (!cameraActive || !streamRef.current || !videoEl) return
+
+    let cancelled = false
+    let rafId = null
+    videoEl.srcObject = streamRef.current
+
+    const checkFrameReady = () => {
+      if (cancelled) return
+      if (videoEl.videoWidth > 0 && videoEl.readyState >= 2) {
+        setVideoReady(true)
+        return
       }
-      videoEl.play().then(handlePlayReady).catch(e => console.warn(e))
+      rafId = requestAnimationFrame(checkFrameReady)
+    }
+
+    videoEl.play().then(checkFrameReady).catch(e => console.warn(e))
+    rafId = requestAnimationFrame(checkFrameReady)
+
+    return () => {
+      cancelled = true
+      if (rafId !== null) cancelAnimationFrame(rafId)
     }
   }, [cameraActive, selectedCameraId])
 
@@ -179,12 +192,12 @@ export default function LiveKiosk({ onScanSuccess }) {
     let effectCancelled = false
     scanActiveRef.current = true
 
-    // Serialized non-overlapping loop starts detection IMMEDIATELY on frame 0 without piling up main-thread work
+    // Serialized non-overlapping loop runs continuously via requestAnimationFrame cadence with 0ms start delay
     const scheduleNext = async () => {
       if (effectCancelled || !scanActiveRef.current) return
       await runMultiPersonRecognition()
       if (!effectCancelled && scanActiveRef.current) {
-        scanLoopTimer.current = setTimeout(scheduleNext, 50)
+        scanLoopTimer.current = setTimeout(scheduleNext, 16)
       }
     }
 
@@ -274,7 +287,10 @@ export default function LiveKiosk({ onScanSuccess }) {
             burst.count += 1
             burstMap.current.set(uid, burst)
 
-            if (burst.count >= 2) {
+            // Instant check-in on frame 1 when distance is strongly inside match threshold (<= 0.48),
+            // otherwise require 2 quick confirming frames
+            const requiredFrames = face.distance <= 0.48 ? 1 : 2
+            if (burst.count >= requiredFrames) {
               burstMap.current.delete(uid)
               cooldownMap.current.set(uid, now)
 
